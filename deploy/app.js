@@ -54,6 +54,10 @@ const store = {
     sales: {},
     stock: {},
   },
+  dailyEditUnlocked: {
+    sales: false,
+    stock: false,
+  },
   dailySubmitted: {},
   timers: [
     { id: "oven-1", label: "Timer 1", minutes: 8, remaining: 480, running: false, finished: false, endsAt: null },
@@ -123,8 +127,11 @@ const store = {
 
 const app = document.getElementById("app");
 const toast = document.getElementById("toast");
+let timerAudioContext = null;
+let timerAudioUnlocked = false;
 
 window.addEventListener("popstate", render);
+document.addEventListener("pointerdown", unlockTimerAudio, { once: true });
 document.addEventListener("click", handleClick);
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
@@ -375,6 +382,10 @@ function parseDailyProgress(row) {
   return { sales: submitted, stock: submitted };
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getErrorMessage(error) {
   if (!error) return "Database error";
   if (typeof error === "string") return error;
@@ -387,12 +398,20 @@ async function persistDatabaseWrite(action) {
     store.dbReady = true;
     store.dbError = "";
     return true;
-  } catch (error) {
-    store.dbReady = false;
-    store.dbError = getErrorMessage(error);
-    console.error("Supabase write failed", error);
-    showToast("Gagal menyimpan ke database. Cek schema DOKO.", "error");
-    return false;
+  } catch (firstError) {
+    await wait(650);
+    try {
+      await action();
+      store.dbReady = true;
+      store.dbError = "";
+      return true;
+    } catch (error) {
+      store.dbReady = false;
+      store.dbError = getErrorMessage(error);
+      console.error("Supabase write failed", error || firstError);
+      showToast("Gagal menyimpan ke database. Cek schema DOKO.", "error");
+      return false;
+    }
   }
 }
 function render() {
@@ -996,6 +1015,7 @@ function renderInputTimers() {
           <h3>Timer Panggang Pizza</h3>
           <p>Set menit panggang untuk tiap oven.</p>
         </div>
+
       </div>
       <div class="timer-grid">
         ${store.timers.map(renderTimerCard).join("")}
@@ -1091,8 +1111,9 @@ function renderAttendanceAction(type, record, label, icon, options = {}) {
 
 function renderCounterRow(pizza, type) {
   const value = store.inputDraft[type][pizza.id] || 0;
+  const locked = isDraftLocked(type);
   return `
-    <article class="variant-row input-counter-row ${type}-row">
+    <article class="variant-row input-counter-row ${type}-row ${locked ? "is-locked" : ""}">
       <div class="pizza-info">
         <span class="pizza-initial">${getInitials(pizza.name)}</span>
         <div>
@@ -1100,11 +1121,11 @@ function renderCounterRow(pizza, type) {
         </div>
       </div>
       <div class="counter" aria-label="${pizza.name} ${type}">
-        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="-1" aria-label="Kurangi ${pizza.name}">
+        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="-1" aria-label="Kurangi ${pizza.name}" ${locked ? "disabled" : ""}>
           <span class="material-symbols-outlined">remove</span>
         </button>
         <span class="count">${value}</span>
-        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="1" aria-label="Tambah ${pizza.name}">
+        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="1" aria-label="Tambah ${pizza.name}" ${locked ? "disabled" : ""}>
           <span class="material-symbols-outlined">add</span>
         </button>
       </div>
@@ -1113,10 +1134,14 @@ function renderCounterRow(pizza, type) {
 }
 
 function renderSubmitBar(canSubmitDaily) {
-  const pageLabel = store.inputPage === "stock" ? "Stok" : "Penjualan";
+  const type = store.inputPage === "stock" ? "stock" : "sales";
+  const pageLabel = type === "stock" ? "Stok" : "Penjualan";
+  const locked = isDraftLocked(type);
   const label = store.submitLoading
     ? `<span class="spinner"></span>Menyimpan...`
-    : `<span class="material-symbols-outlined">send</span>Submit ${pageLabel}`;
+    : locked
+      ? `<span class="material-symbols-outlined">edit</span>Perbaharui Data`
+      : `<span class="material-symbols-outlined">send</span>Submit ${pageLabel}`;
 
   return `
     <div class="submit-bar">
@@ -1413,6 +1438,10 @@ function handleClick(event) {
     const type = counter.dataset.counter;
     const id = counter.dataset.id;
     const delta = Number(counter.dataset.delta);
+    if (isDraftLocked(type)) {
+      showToast("Klik Perbaharui Data dulu untuk mengubah qty.", "error");
+      return;
+    }
     store.inputDraft[type][id] = Math.max(0, (store.inputDraft[type][id] || 0) + delta);
     render();
     return;
@@ -1457,6 +1486,7 @@ function handleClick(event) {
     submitDailyData();
     return;
   }
+
 
   const timerStart = event.target.closest("[data-timer-start]")?.dataset.timerStart;
   if (timerStart) {
@@ -1596,7 +1626,10 @@ async function confirmDeletePizza() {
     store.editingPizzaId = previousEditingId;
     store.pizzaFormOpen = previousFormOpen;
     store.pizzaForm = previousForm;
-    showToast("Produk belum terhapus dari database.", "error");
+    const deleteError = store.dbError.includes("row-level security") || store.dbError.includes("42501")
+      ? "Produk belum terhapus. Jalankan SQL policy delete produk dulu."
+      : "Produk belum terhapus dari database.";
+    showToast(deleteError, "error");
     render();
     return;
   }
@@ -1762,6 +1795,13 @@ async function submitDailyData() {
     return;
   }
 
+  if (isDraftLocked(submitType, today)) {
+    store.dailyEditUnlocked[submitType] = true;
+    showToast(`${submitLabel} bisa diperbarui. Ubah qty lalu submit lagi.`, "success");
+    render();
+    return;
+  }
+
   store.submitLoading = true;
   render();
 
@@ -1773,6 +1813,7 @@ async function submitDailyData() {
   record[submitType] = getDraftValues(submitType);
   store.records[today] = record;
   store.dailySubmitted[today] = { ...previousProgress, [submitType]: true };
+  store.dailyEditUnlocked[submitType] = false;
 
   const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(today));
   store.submitLoading = false;
@@ -1784,6 +1825,7 @@ async function submitDailyData() {
       delete store.records[today];
     }
     store.dailySubmitted[today] = previousProgress;
+    store.dailyEditUnlocked[submitType] = true;
     render();
     return;
   }
@@ -1798,6 +1840,7 @@ async function submitDailyData() {
   render();
 }
 function toggleTimer(id) {
+  unlockTimerAudio();
   const timer = store.timers.find((item) => item.id === id);
   if (!timer) return;
 
@@ -1813,6 +1856,47 @@ function toggleTimer(id) {
   }
 
   render();
+}
+
+function unlockTimerAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return false;
+  if (!timerAudioContext) timerAudioContext = new AudioContextClass();
+  if (timerAudioContext.state === "suspended") {
+    timerAudioContext.resume().catch(() => {});
+  }
+  timerAudioUnlocked = true;
+  return true;
+}
+
+
+function scheduleTimerTone(offsets, volume = 0.42) {
+  if (!timerAudioContext || !timerAudioUnlocked) return;
+
+  const now = timerAudioContext.currentTime + 0.04;
+  offsets.forEach((offset, index) => {
+    const oscillator = timerAudioContext.createOscillator();
+    const gain = timerAudioContext.createGain();
+    oscillator.type = index % 2 ? "triangle" : "square";
+    oscillator.frequency.setValueAtTime(index % 2 ? 1040 : 820, now + offset);
+    gain.gain.setValueAtTime(0.0001, now + offset);
+    gain.gain.exponentialRampToValueAtTime(volume, now + offset + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.28);
+    oscillator.connect(gain);
+    gain.connect(timerAudioContext.destination);
+    oscillator.start(now + offset);
+    oscillator.stop(now + offset + 0.3);
+  });
+}
+
+function playTimerAlarm(label = "Timer") {
+  const ready = unlockTimerAudio();
+  if (navigator.vibrate) navigator.vibrate([700, 160, 700, 160, 900, 240, 900]);
+  showToast(`${label} selesai`, "success");
+  if (!ready) return;
+
+  const pattern = Array.from({ length: 18 }, (_, index) => index * 0.38);
+  scheduleTimerTone(pattern, 0.48);
 }
 
 function resetTimer(id) {
@@ -1852,6 +1936,7 @@ function updateTimers() {
       timer.running = false;
       timer.finished = true;
       timer.endsAt = null;
+      playTimerAlarm(timer.label);
       changed = true;
     }
   });
@@ -1911,7 +1996,14 @@ function startCamera() {
   }
 
   navigator.mediaDevices
-    .getUserMedia({ video: { facingMode: { ideal: store.cameraFacing } }, audio: false })
+    .getUserMedia({
+      video: {
+        facingMode: { ideal: store.cameraFacing },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    })
     .then((stream) => {
       store.cameraStream = stream;
       video.srcObject = stream;
@@ -1934,10 +2026,15 @@ function capturePhoto() {
   const video = document.getElementById("camera-video");
   if (video && video.videoWidth) {
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.86);
+    const targetWidth = Math.max(video.videoWidth, 1280);
+    const scale = targetWidth / video.videoWidth;
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const context = canvas.getContext("2d");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.96);
   } else {
     store.capturedPhoto = null;
     showToast("Kamera belum siap. Ambil foto ulang.", "error");
@@ -2083,6 +2180,10 @@ function getDraftValues(type) {
       values[pizza.id] = Number(store.inputDraft[type][pizza.id]) || 0;
       return values;
     }, {});
+}
+
+function isDraftLocked(type, date = isoDate(new Date())) {
+  return Boolean(getDailyProgress(date)[type] && !store.dailyEditUnlocked[type]);
 }
 
 function getDailyProgress(date) {
@@ -2294,6 +2395,12 @@ function hideToast() {
   toast.className = "toast";
   toast.innerHTML = "";
 }
+
+
+
+
+
+
 
 
 

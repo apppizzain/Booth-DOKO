@@ -80,6 +80,7 @@ create policy "DOKO settings update"
 drop policy if exists "DOKO pizzas read" on public.doko_pizzas;
 drop policy if exists "DOKO pizzas insert" on public.doko_pizzas;
 drop policy if exists "DOKO pizzas update" on public.doko_pizzas;
+drop policy if exists "DOKO pizzas delete" on public.doko_pizzas;
 
 create policy "DOKO pizzas read"
   on public.doko_pizzas for select
@@ -96,6 +97,11 @@ create policy "DOKO pizzas update"
   to anon
   using (app_id = 'pizzain_doko_v1')
   with check (app_id = 'pizzain_doko_v1');
+
+create policy "DOKO pizzas delete"
+  on public.doko_pizzas for delete
+  to anon
+  using (app_id = 'pizzain_doko_v1');
 
 drop policy if exists "DOKO records read" on public.doko_daily_records;
 drop policy if exists "DOKO records insert" on public.doko_daily_records;
@@ -136,3 +142,4 @@ create policy "DOKO attendance update"
   to anon
   using (app_id = 'pizzain_doko_v1')
   with check (app_id = 'pizzain_doko_v1');
+
