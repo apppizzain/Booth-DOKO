@@ -2128,15 +2128,13 @@ a {
   margin-top: 3px;
 }
 
-.fee-save-btn {
-  background: var(--red);
-  color: #fff;
-  height: 34px;
-  width: 34px;
-}
-
-.fee-save-btn .material-symbols-outlined {
-  font-size: 19px;
+.fee-save-btn,
+.password-save-btn {
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 34px;
+  padding: 0 14px;
 }
 
 .fee-compact-field {
@@ -2250,4 +2248,341 @@ a {
   font-weight: 800;
   line-height: 1.2;
   margin: 3px 0 0;
+}.password-compact-panel {
+  padding: 12px;
+}
+
+.password-compact-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.password-compact-head span {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.password-compact-head strong {
+  display: block;
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.15;
+  margin-top: 3px;
+}
+
+.password-compact-field {
+  align-items: center;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  margin-top: 10px;
+  padding: 8px 10px;
+}
+
+.password-compact-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.password-compact-field input {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+  text-align: right;
+}
+.attendance-recap-filter {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 9px 10px;
+  text-align: left;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.attendance-recap-filter:active {
+  transform: scale(0.98);
+}
+
+.attendance-recap-filter.active {
+  background: var(--red-soft);
+  border-color: #f0a8b2;
+  color: var(--red-deep);
+}
+
+.attendance-recap-filter span {
+  color: inherit;
+  display: block;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.attendance-recap-filter strong {
+  display: block;
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 18px;
+  line-height: 1;
+  margin-top: 6px;
+}
+
+.attendance-record-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  margin-top: 7px;
+  padding: 5px 8px;
+}
+
+.attendance-record-badge.early {
+  background: #fff1d6;
+  color: #8a5200;
+}
+
+.attendance-record-badge.ontime {
+  background: #dcf7ee;
+  color: #087555;
+}
+
+.attendance-record-badge.late {
+  background: var(--red-soft);
+  color: var(--red-deep);
+}
+.product-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.product-actions .icon-btn {
+  color: var(--muted);
+}
+
+.product-actions .icon-btn.danger {
+  color: #b5182b;
+}
+
+.product-actions .icon-btn.danger:hover {
+  background: var(--red-soft);
+  color: var(--red-deep);
+}
+
+.compact-product-form {
+  padding: 12px;
+}
+
+.product-form-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.product-form-head span {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.product-form-head h3 {
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 18px;
+  line-height: 1.1;
+  margin: 2px 0 0;
+}
+
+.form-close-btn {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  height: 34px;
+  width: 34px;
+}
+
+.compact-product-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-product-field {
+  align-items: center;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 62px minmax(0, 1fr);
+  min-height: 42px;
+  padding: 7px 10px;
+}
+
+.compact-product-field:focus-within {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(201, 21, 47, 0.1);
+}
+
+.compact-product-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.compact-product-field input {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+  text-align: right;
+}
+
+.product-form-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.product-form-actions .switch {
+  min-height: 34px;
+}
+
+.product-save-btn {
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 36px;
+  padding: 0 18px;
+}
+
+.toast.confirm {
+  align-items: center;
+  background: #241719;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  pointer-events: auto;
+}
+
+.toast.confirm span {
+  line-height: 1.25;
+}
+
+.toast-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.toast-actions button {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 30px;
+  padding: 0 12px;
+}
+
+.toast-actions button:first-child {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.toast-actions button:last-child {
+  background: #fff;
+  color: var(--red-deep);
+}
+
+.photo-thumb-button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
+.photo-thumb-button:focus-visible {
+  outline: 3px solid rgba(201, 21, 47, 0.25);
+  outline-offset: 3px;
+}
+
+.photo-frame-thumb {
+  border: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.photo-preview-modal {
+  padding: 18px;
+}
+
+.photo-preview-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  max-width: min(420px, calc(100vw - 36px));
+  overflow: hidden;
+  width: 100%;
+}
+
+.photo-preview-card header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.photo-preview-card header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.photo-preview-card header h3 {
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 16px;
+  margin: 2px 0 0;
+}
+
+.photo-preview-image,
+.photo-preview-frame {
+  background: #140c0d;
+  border: 0;
+  display: block;
+  max-height: 70dvh;
+  min-height: 360px;
+  object-fit: contain;
+  width: 100%;
 }

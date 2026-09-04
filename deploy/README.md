@@ -10,4 +10,5 @@ Cara pakai:
 Catatan:
 - Aplikasi memakai Supabase project `qipqhopjbwjquschrggt`.
 - Data aplikasi ini dipisahkan di tabel `doko_*` dengan `app_id = pizzain_doko_v1`.
+- Jika fitur ubah password belum tersimpan, jalankan `supabase-doko-admin-pin.sql` sekali di Supabase SQL Editor.
 - Karena aplikasi berjalan dari browser, Supabase anon key memang ikut berada di file JavaScript. Pastikan RLS tetap aktif.

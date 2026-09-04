@@ -9,17 +9,23 @@ const PIZZA_IMAGES = {
     "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=500&q=80",
 };
 
-const ADMIN_PIN = "1234";
+const DEFAULT_ADMIN_PIN = "0000";
 const SUPABASE_URL = "https://qipqhopjbwjquschrggt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpcHFob3BqYndqcXVzY2hyZ2d0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NjQ1MDYsImV4cCI6MjA5NzQ0MDUwNn0._LAfxDUc7JDb8SfGjL-XwoeC2ECbrJvDoEKx4_iTuH0";
 const DOKO_APP_ID = "pizzain_doko_v1";
 const APP_ROUTES = new Set(["admin", "input", "view"]);
+const GAS_PHOTO_UPLOAD_URL = "https://script.google.com/macros/s/AKfycbyiQGAfG_AJSwMAaGTwsl1G5CiYmgKgBXyOuji9nsG4VOJ5hegolFL_bdroypwc8cT1AQ/exec";
 
 const store = {
   ownerFee: 2000,
   adminView: "dashboard",
+  attendanceFilter: "in",
   adminUnlocked: false,
+  adminPin: DEFAULT_ADMIN_PIN,
   adminPinInput: "",
+  adminPasswordForm: {
+    pin: "",
+  },
   inputPage: "attendance",
   viewerFilter: "today",
   rangeStart: isoDate(new Date()),
@@ -32,10 +38,12 @@ const store = {
   dbError: "",
   editingPizzaId: null,
   pizzaFormOpen: false,
+  deleteConfirmPizzaId: null,
   attendanceMode: null,
   cameraStream: null,
   cameraFacing: "user",
   capturedPhoto: null,
+  attendancePhotoPreview: null,
   pizzaForm: {
     name: "",
     cost: "",
@@ -158,6 +166,7 @@ async function loadRemoteData() {
   } else {
     await dbUpsertSetting(store.ownerFee);
   }
+  await loadAdminPinSetting();
 
   if (pizzaRows.length) {
     store.pizzas = pizzaRows.map((row) => ({
@@ -176,10 +185,10 @@ async function loadRemoteData() {
   store.dailySubmitted = {};
   recordRows.forEach((row) => {
     store.records[row.record_date] = {
-      sales: row.sales || {},
-      stock: row.stock || {},
+      sales: cleanDailyValues(row.sales),
+      stock: cleanDailyValues(row.stock),
     };
-    store.dailySubmitted[row.record_date] = Boolean(row.submitted_at);
+    store.dailySubmitted[row.record_date] = parseDailyProgress(row);
   });
 
   store.attendance = {};
@@ -192,10 +201,25 @@ async function loadRemoteData() {
 
   const today = isoDate(new Date());
   if (!store.attendance[today]) store.attendance[today] = { in: null, out: null };
+  if (store.records[today]) {
+    store.inputDraft.sales = { ...store.records[today].sales };
+    store.inputDraft.stock = { ...store.records[today].stock };
+  }
 }
 
 async function dbSelect(table, query) {
   return dbRequest(`${table}?${query}`);
+}
+
+async function loadAdminPinSetting() {
+  try {
+    const rows = await dbSelect("doko_settings", `app_id=eq.${DOKO_APP_ID}&select=admin_pin&limit=1`);
+    const pin = String(rows?.[0]?.admin_pin || "").replace(/\D/g, "").slice(0, 4);
+    if (pin.length === 4) store.adminPin = pin;
+  } catch (error) {
+    console.warn("Admin PIN column is not ready yet", error);
+    store.adminPin = DEFAULT_ADMIN_PIN;
+  }
 }
 
 async function dbUpsert(table, row, conflictColumns) {
@@ -236,6 +260,19 @@ async function dbUpsertSetting(ownerFee) {
   );
 }
 
+async function dbUpsertAdminPin(pin) {
+  return dbUpsert(
+    "doko_settings",
+    {
+      app_id: DOKO_APP_ID,
+      owner_fee: store.ownerFee,
+      admin_pin: pin,
+      updated_at: new Date().toISOString(),
+    },
+    "app_id"
+  );
+}
+
 async function dbUpsertPizza(pizza, sortOrder = store.pizzas.findIndex((item) => item.id === pizza.id)) {
   return dbUpsert(
     "doko_pizzas",
@@ -272,14 +309,23 @@ async function dbUpsertPizzas(pizzas) {
     prefer: "resolution=merge-duplicates,return=minimal",
   });
 }
+async function dbDeletePizza(id) {
+  return dbRequest(`doko_pizzas?app_id=eq.${DOKO_APP_ID}&id=eq.${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    prefer: "return=minimal",
+  });
+}
+
 async function dbUpsertDailyRecord(date) {
+  const record = store.records[date] || { sales: {}, stock: {} };
+  const progress = getDailyProgress(date);
   return dbUpsert(
     "doko_daily_records",
     {
       app_id: DOKO_APP_ID,
       record_date: date,
-      sales: store.records[date]?.sales || {},
-      stock: store.records[date]?.stock || {},
+      sales: withSubmittedFlag(record.sales, progress.sales),
+      stock: withSubmittedFlag(record.stock, progress.stock),
       submitted_at: new Date().toISOString(),
     },
     "app_id,record_date"
@@ -299,6 +345,34 @@ async function dbUpsertAttendance(date) {
     },
     "app_id,record_date"
   );
+}
+
+function cleanDailyValues(values) {
+  return Object.fromEntries(
+    Object.entries(values || {}).filter(([key]) => key !== "__submitted")
+  );
+}
+
+function withSubmittedFlag(values, submitted) {
+  return { ...(values || {}), __submitted: Boolean(submitted) };
+}
+
+function hasSubmissionMarkers(row) {
+  return Boolean(
+    row?.sales && Object.prototype.hasOwnProperty.call(row.sales, "__submitted") ||
+    row?.stock && Object.prototype.hasOwnProperty.call(row.stock, "__submitted")
+  );
+}
+
+function parseDailyProgress(row) {
+  if (hasSubmissionMarkers(row)) {
+    return {
+      sales: Boolean(row.sales?.__submitted),
+      stock: Boolean(row.stock?.__submitted),
+    };
+  }
+  const submitted = Boolean(row?.submitted_at);
+  return { sales: submitted, stock: submitted };
 }
 
 function getErrorMessage(error) {
@@ -338,6 +412,10 @@ function render() {
     app.insertAdjacentHTML("beforeend", renderCameraModal());
     startCamera();
   }
+
+  if (store.attendancePhotoPreview) {
+    app.insertAdjacentHTML("beforeend", renderPhotoPreviewModal());
+  }
 }
 
 function shell(role, content) {
@@ -363,24 +441,20 @@ function shell(role, content) {
   `;
 }
 
-function roleHref(role) {
-  const route = role === "viewer" ? "view" : role;
-  return routePath(route);
-}
-
-function getAppBasePath() {
-  const segments = location.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
-  const lastSegment = segments[segments.length - 1];
-  const baseSegments = APP_ROUTES.has(lastSegment) ? segments.slice(0, -1) : segments;
-  return baseSegments.length ? `/${baseSegments.join("/")}` : "";
-}
-
-function routePath(route) {
-  return `${getAppBasePath()}/${route.replace(/^\/+/, "")}`;
+function appBasePath() {
+  const parts = window.location.pathname.split("/").filter(Boolean);
+  const last = parts[parts.length - 1];
+  if (APP_ROUTES.has(last)) parts.pop();
+  return `/${parts.join("/")}${parts.length ? "/" : ""}`;
 }
 
 function assetPath(path) {
-  return `${getAppBasePath()}/${path.replace(/^\/+/, "")}`;
+  return `${appBasePath()}${path}`;
+}
+
+function roleHref(role) {
+  const route = role === "viewer" ? "view" : role;
+  return APP_ROUTES.has(route) ? `${appBasePath()}${route}/` : appBasePath();
 }
 
 function renderAdminPin() {
@@ -565,37 +639,42 @@ function renderManagePizza() {
         ${store.pizzas.map(renderPizzaAdminRow).join("")}
       </div>
     </section>
-    ${renderOwnerFee()}
     ${showForm ? `
-      <section class="panel product-form-panel">
-        <div class="section-title product-form-title">
-          <span class="icon-tile"><span class="material-symbols-outlined">${store.editingPizzaId ? "edit" : "add"}</span></span>
+      <section class="panel product-form-panel compact-product-form">
+        <div class="product-form-head">
           <div>
-            <h3>${store.editingPizzaId ? "Edit Pizza" : "Tambah Pizza"}</h3>
-            <p>Gunakan angka tanpa titik untuk nominal.</p>
+            <span>Produk</span>
+            <h3>${store.editingPizzaId ? "Edit Produk" : "Tambah Produk"}</h3>
           </div>
+          <button class="icon-btn form-close-btn" type="button" data-close-pizza-form aria-label="Tutup form produk">
+            <span class="material-symbols-outlined">close</span>
+          </button>
         </div>
-        <form class="form-grid" data-pizza-form>
-          <div class="field">
-            <label for="pizza-name">Nama Pizza</label>
-            <input id="pizza-name" data-form-field="name" value="${escapeHtml(store.pizzaForm.name)}" placeholder="Contoh: Tuna Melt Slice" />
-          </div>
-          <div class="field">
-            <label for="pizza-cost">Harga Modal</label>
-            <input id="pizza-cost" data-form-field="cost" inputmode="numeric" value="${escapeHtml(store.pizzaForm.cost)}" placeholder="10000" />
-          </div>
-          <div class="field">
-            <label for="pizza-price">Harga Jual</label>
-            <input id="pizza-price" data-form-field="price" inputmode="numeric" value="${escapeHtml(store.pizzaForm.price)}" placeholder="25000" />
-          </div>
-          <label class="switch">
-            <input type="checkbox" data-form-field="active" ${store.pizzaForm.active ? "checked" : ""} />
-            <span>Aktif</span>
+        <form class="compact-product-grid" data-pizza-form>
+          <label class="compact-product-field" for="pizza-name">
+            <span>Nama</span>
+            <input id="pizza-name" data-form-field="name" value="${escapeHtml(store.pizzaForm.name)}" placeholder="Tuna Melt Slice" />
           </label>
-          <button class="btn full" type="button" data-save-pizza><span class="material-symbols-outlined">save</span>Simpan Pizza</button>
+          <label class="compact-product-field" for="pizza-cost">
+            <span>Modal</span>
+            <input id="pizza-cost" data-form-field="cost" inputmode="numeric" value="${escapeHtml(store.pizzaForm.cost)}" placeholder="10000" />
+          </label>
+          <label class="compact-product-field" for="pizza-price">
+            <span>Jual</span>
+            <input id="pizza-price" data-form-field="price" inputmode="numeric" value="${escapeHtml(store.pizzaForm.price)}" placeholder="25000" />
+          </label>
+          <div class="product-form-actions">
+            <label class="switch compact-switch">
+              <input type="checkbox" data-form-field="active" ${store.pizzaForm.active ? "checked" : ""} />
+              <span>Aktif</span>
+            </label>
+            <button class="btn product-save-btn" type="button" data-save-pizza>Simpan</button>
+          </div>
         </form>
       </section>
     ` : ""}
+    ${renderOwnerFee()}
+    ${renderAdminPassword()}
   `;
 }
 
@@ -610,9 +689,12 @@ function renderPizzaAdminRow(pizza) {
           <span class="chip ${pizza.active ? "green" : "gray"}">${pizza.active ? "Aktif" : "Nonaktif"}</span>
         </div>
       </div>
-      <div class="counter">
+      <div class="product-actions">
         <button class="icon-btn" data-edit-pizza="${pizza.id}" aria-label="Edit ${pizza.name}">
           <span class="material-symbols-outlined">edit</span>
+        </button>
+        <button class="icon-btn danger" data-delete-pizza="${pizza.id}" aria-label="Hapus ${pizza.name}">
+          <span class="material-symbols-outlined">delete</span>
         </button>
         <label class="switch" aria-label="Status ${pizza.name}">
           <input type="checkbox" data-toggle-pizza="${pizza.id}" ${pizza.active ? "checked" : ""} />
@@ -630,9 +712,7 @@ function renderOwnerFee() {
           <span>Fee Pemilik</span>
           <strong>${rupiah(store.ownerFee)} / slice</strong>
         </div>
-        <button class="icon-btn fee-save-btn" data-save-fee aria-label="Simpan fee pemilik">
-          <span class="material-symbols-outlined">save</span>
-        </button>
+        <button class="btn fee-save-btn" data-save-fee aria-label="Simpan fee pemilik">Simpan</button>
       </div>
       <label class="fee-compact-field" for="owner-fee">
         <span>Nominal</span>
@@ -642,9 +722,28 @@ function renderOwnerFee() {
   `;
 }
 
+function renderAdminPassword() {
+  return `
+    <section class="panel password-compact-panel">
+      <div class="password-compact-head">
+        <div>
+          <span>Password Admin</span>
+          <strong>PIN 4 digit</strong>
+        </div>
+        <button class="btn password-save-btn" data-save-admin-password aria-label="Simpan password admin">Simpan</button>
+      </div>
+      <label class="password-compact-field" for="admin-password-new">
+        <span>PIN Baru</span>
+        <input id="admin-password-new" data-admin-password-pin type="password" inputmode="numeric" maxlength="4" value="${escapeHtml(store.adminPasswordForm.pin)}" placeholder="0000" />
+      </label>
+    </section>
+  `;
+}
+
 function renderAttendanceHistory() {
   const dates = Object.keys(store.attendance).sort().reverse();
   const recap = getMonthlyAttendanceRecap(new Date());
+  const filteredDates = getFilteredAttendanceDates(dates);
   return `
     <section class="panel attendance-recap-panel">
       <div class="attendance-recap-head">
@@ -655,20 +754,29 @@ function renderAttendanceHistory() {
         <strong>${recap.presentDays} hari</strong>
       </div>
       <div class="attendance-recap-grid">
-        <div><span>Masuk</span><strong>${recap.checkIns}</strong></div>
-        <div><span>Pulang</span><strong>${recap.checkOuts}</strong></div>
-        <div><span>Tepat Waktu</span><strong>${recap.onTime}</strong></div>
-        <div><span>Terlambat</span><strong>${recap.late}</strong></div>
+        ${attendanceRecapButton("in", "Masuk", recap.checkIns)}
+        ${attendanceRecapButton("early-out", "Pulang Cepat", recap.earlyCheckOuts)}
+        ${attendanceRecapButton("ontime", "Tepat Waktu", recap.onTime)}
+        ${attendanceRecapButton("late", "Terlambat", recap.late)}
       </div>
     </section>
     <section class="panel attendance-history-panel">
       <div class="history-head">
-        <h3>Riwayat Absensi</h3>
+        <h3>${getAttendanceFilterTitle()}</h3>
       </div>
       <div class="stack attendance-history-list">
-        ${dates.map(renderAttendanceRecord).join("") || `<p class="muted">Belum ada absensi.</p>`}
+        ${filteredDates.map(renderAttendanceRecord).join("") || `<p class="muted">Belum ada data ${getAttendanceFilterLabel().toLowerCase()}.</p>`}
       </div>
     </section>
+  `;
+}
+
+function attendanceRecapButton(filter, label, value) {
+  return `
+    <button class="attendance-recap-filter ${store.attendanceFilter === filter ? "active" : ""}" data-attendance-filter="${filter}">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </button>
   `;
 }
 
@@ -683,31 +791,98 @@ function getMonthlyAttendanceRecap(date) {
       const hasCheckOut = Boolean(record.out);
       if (hasCheckIn || hasCheckOut) recap.presentDays += 1;
       if (hasCheckIn) recap.checkIns += 1;
-      if (hasCheckOut) recap.checkOuts += 1;
+      if (record.out?.status === "early") recap.earlyCheckOuts += 1;
       if (record.in?.status === "ontime") recap.onTime += 1;
       if (record.in?.status === "late") recap.late += 1;
       return recap;
     },
-    { monthLabel, presentDays: 0, checkIns: 0, checkOuts: 0, onTime: 0, late: 0 }
+    { monthLabel, presentDays: 0, checkIns: 0, earlyCheckOuts: 0, onTime: 0, late: 0 }
   );
 }
 
 function renderAttendanceRecord(date) {
   const item = store.attendance[date] || {};
+  const type = store.attendanceFilter === "early-out" ? "out" : "in";
+  const record = item[type];
+  const feedback = record ? getAttendanceFeedbackFromTime(type, record.time) : null;
   return `
     <article class="attendance-record">
       <div>
         <h4>${formatDate(date)}</h4>
-        <p>Masuk: ${item.in?.time || "-"} | Pulang: ${item.out?.time || "-"}</p>
+        <p>${type === "out" ? "Pulang" : "Masuk"}: ${record?.time || "-"}</p>
+        ${feedback ? `<span class="attendance-record-badge ${feedback.status}">${feedback.badge}</span>` : ""}
       </div>
       <div class="counter">
-        ${item.in?.photo ? `<img class="photo-thumb" alt="Foto absen masuk" src="${item.in.photo}" />` : `<span class="photo-thumb photo-empty">Masuk</span>`}
-        ${item.out?.photo ? `<img class="photo-thumb" alt="Foto absen pulang" src="${item.out.photo}" />` : `<span class="photo-thumb photo-empty">Pulang</span>`}
+        ${renderAttendancePhotoThumb(record, type, date)}
       </div>
     </article>
   `;
 }
 
+function getFilteredAttendanceDates(dates) {
+  return dates.filter((date) => {
+    const record = store.attendance[date] || {};
+    if (store.attendanceFilter === "early-out") return record.out?.status === "early";
+    if (store.attendanceFilter === "ontime") return record.in?.status === "ontime";
+    if (store.attendanceFilter === "late") return record.in?.status === "late";
+    return Boolean(record.in);
+  });
+}
+
+function getAttendanceFilterLabel() {
+  if (store.attendanceFilter === "early-out") return "Pulang Cepat";
+  if (store.attendanceFilter === "ontime") return "Tepat Waktu";
+  if (store.attendanceFilter === "late") return "Terlambat";
+  return "Masuk";
+}
+
+function getAttendanceFilterTitle() {
+  return `Riwayat Absensi ${getAttendanceFilterLabel()}`;
+}
+
+function isGasPhotoUrl(src) {
+  return String(src || "").includes("action=view") || String(src || "").includes("script.google.com/macros/");
+}
+
+function renderPhotoMedia(src, title, compact = false) {
+  const safeSrc = escapeHtml(src);
+  const safeTitle = escapeHtml(title || "Foto absensi");
+  if (isGasPhotoUrl(src)) {
+    return `<iframe class="${compact ? "photo-thumb photo-frame-thumb" : "photo-preview-frame"}" title="${safeTitle}" src="${safeSrc}" loading="lazy"></iframe>`;
+  }
+  return `<img class="${compact ? "photo-thumb" : "photo-preview-image"}" alt="${safeTitle}" src="${safeSrc}" />`;
+}
+
+function renderAttendancePhotoThumb(record, type, date) {
+  const label = type === "out" ? "Pulang" : "Masuk";
+  if (!record?.photo) return `<span class="photo-thumb photo-empty">${label}</span>`;
+  const title = `${label} - ${formatDate(date)} ${record.time || ""}`.trim();
+  return `
+    <button class="photo-thumb-button" data-preview-photo="${escapeHtml(record.photo)}" data-preview-title="${escapeHtml(title)}" aria-label="Preview foto absen ${label.toLowerCase()}">
+      ${renderPhotoMedia(record.photo, `Foto absen ${label.toLowerCase()}`, true)}
+    </button>
+  `;
+}
+
+function renderPhotoPreviewModal() {
+  const preview = store.attendancePhotoPreview;
+  return `
+    <div class="modal open photo-preview-modal" role="dialog" aria-modal="true" aria-label="Preview foto absensi">
+      <section class="photo-preview-card">
+        <header>
+          <div>
+            <span>Foto Absensi</span>
+            <h3>${escapeHtml(preview.title || "Preview")}</h3>
+          </div>
+          <button class="icon-btn" data-close-photo-preview aria-label="Tutup preview foto">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </header>
+        ${renderPhotoMedia(preview.src, preview.title || "Preview foto absensi")}
+      </section>
+    </div>
+  `;
+}
 function renderInput(options = {}) {
   const today = isoDate(new Date());
   const attendance = store.attendance[today] || { in: null, out: null };
@@ -761,7 +936,7 @@ function renderInputAttendance(today, attendance) {
         ${renderAttendanceAction("in", attendance.in, "Masuk", "how_to_reg")}
         ${renderAttendanceAction("out", attendance.out, "Pulang", "logout", {
           disabled: !canCheckOut,
-          hint: attendance.in ? "Submit data harian dulu" : "Absen masuk dulu",
+          hint: getCheckoutHint(today, attendance),
         })}
       </div>
     </section>
@@ -938,13 +1113,14 @@ function renderCounterRow(pizza, type) {
 }
 
 function renderSubmitBar(canSubmitDaily) {
+  const pageLabel = store.inputPage === "stock" ? "Stok" : "Penjualan";
   const label = store.submitLoading
     ? `<span class="spinner"></span>Menyimpan...`
-    : `<span class="material-symbols-outlined">send</span>Submit Data Harian`;
+    : `<span class="material-symbols-outlined">send</span>Submit ${pageLabel}`;
 
   return `
     <div class="submit-bar">
-      ${canSubmitDaily ? "" : `<p>Absen Masuk dulu untuk upload data harian.</p>`}
+      ${canSubmitDaily ? "" : `<p>Absen Masuk dulu untuk submit ${pageLabel.toLowerCase()}.</p>`}
       <button class="btn full" data-submit-daily ${store.submitLoading || !canSubmitDaily ? "disabled" : ""}>${label}</button>
     </div>
   `;
@@ -1174,6 +1350,33 @@ function handleClick(event) {
     return;
   }
 
+  if (event.target.closest("[data-confirm-delete-pizza]")) {
+    confirmDeletePizza();
+    return;
+  }
+
+  if (event.target.closest("[data-cancel-delete-pizza]")) {
+    store.deleteConfirmPizzaId = null;
+    hideToast();
+    return;
+  }
+
+  const photoPreviewButton = event.target.closest("[data-preview-photo]");
+  if (photoPreviewButton) {
+    store.attendancePhotoPreview = {
+      src: photoPreviewButton.dataset.previewPhoto,
+      title: photoPreviewButton.dataset.previewTitle || "Preview foto",
+    };
+    render();
+    return;
+  }
+
+  if (event.target.closest("[data-close-photo-preview]")) {
+    store.attendancePhotoPreview = null;
+    render();
+    return;
+  }
+
   const adminView = event.target.closest("[data-admin-view]")?.dataset.adminView;
   if (adminView) {
     store.adminView = adminView;
@@ -1188,6 +1391,13 @@ function handleClick(event) {
 
   if (event.target.closest("[data-pin-focus]")) {
     document.querySelector("[data-admin-pin]")?.focus();
+    return;
+  }
+
+  const attendanceFilter = event.target.closest("[data-attendance-filter]")?.dataset.attendanceFilter;
+  if (attendanceFilter) {
+    store.attendanceFilter = attendanceFilter;
+    render();
     return;
   }
 
@@ -1285,13 +1495,30 @@ function handleClick(event) {
     store.pizzaFormOpen = true;
     store.pizzaForm = { name: "", cost: "", price: "", active: true };
     render();
+    focusPizzaForm();
     return;
   }
+
+  if (event.target.closest("[data-close-pizza-form]")) {
+    closePizzaForm();
+    render();
+    return;
+  }
+  const deletePizzaId = event.target.closest("[data-delete-pizza]")?.dataset.deletePizza;
+  if (deletePizzaId) {
+    requestDeletePizza(deletePizzaId);
+    return;
+  }
+
   const editPizzaId = event.target.closest("[data-edit-pizza]")?.dataset.editPizza;
   if (editPizzaId) {
     const pizza = store.pizzas.find((item) => item.id === editPizzaId);
+    if (!pizza) {
+      showToast("Produk tidak ditemukan.", "error");
+      return;
+    }
     store.editingPizzaId = editPizzaId;
-        store.pizzaFormOpen = true;
+    store.pizzaFormOpen = true;
     store.pizzaForm = {
       name: pizza.name,
       cost: String(pizza.cost),
@@ -1299,6 +1526,7 @@ function handleClick(event) {
       active: pizza.active,
     };
     render();
+    focusPizzaForm();
     return;
   }
 
@@ -1311,6 +1539,69 @@ function handleClick(event) {
     saveOwnerFee();
     return;
   }
+
+  if (event.target.closest("[data-save-admin-password]")) {
+    saveAdminPassword();
+    return;
+  }
+}
+
+function focusPizzaForm() {
+  requestAnimationFrame(() => {
+    const input = document.querySelector("#pizza-name");
+    input?.focus();
+    input?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+}
+
+function closePizzaForm() {
+  store.editingPizzaId = null;
+  store.pizzaFormOpen = false;
+  store.pizzaForm = { name: "", cost: "", price: "", active: true };
+}
+
+function requestDeletePizza(id) {
+  const pizza = store.pizzas.find((item) => item.id === id);
+  if (!pizza) {
+    showToast("Produk tidak ditemukan.", "error");
+    return;
+  }
+  store.deleteConfirmPizzaId = id;
+  showConfirmToast(`Hapus ${pizza.name}?`);
+}
+
+async function confirmDeletePizza() {
+  const id = store.deleteConfirmPizzaId;
+  const pizza = store.pizzas.find((item) => item.id === id);
+  if (!pizza) {
+    store.deleteConfirmPizzaId = null;
+    hideToast();
+    showToast("Produk tidak ditemukan.", "error");
+    return;
+  }
+
+  const previousPizzas = [...store.pizzas];
+  const previousEditingId = store.editingPizzaId;
+  const previousFormOpen = store.pizzaFormOpen;
+  const previousForm = { ...store.pizzaForm };
+  store.pizzas = store.pizzas.filter((item) => item.id !== id);
+  if (store.editingPizzaId === id) closePizzaForm();
+  store.deleteConfirmPizzaId = null;
+  hideToast();
+  render();
+
+  const saved = await persistDatabaseWrite(() => dbDeletePizza(id));
+  if (!saved) {
+    store.pizzas = previousPizzas;
+    store.editingPizzaId = previousEditingId;
+    store.pizzaFormOpen = previousFormOpen;
+    store.pizzaForm = previousForm;
+    showToast("Produk belum terhapus dari database.", "error");
+    render();
+    return;
+  }
+  showToast("Produk berhasil dihapus", "success");
+  render();
 }
 
 function saveOwnerFee() {
@@ -1329,11 +1620,38 @@ function saveOwnerFee() {
   });
   render();
 }
+function saveAdminPassword() {
+  const pin = store.adminPasswordForm.pin.replace(/\D/g, "").slice(0, 4);
+  if (pin.length !== 4) {
+    showToast("PIN admin harus 4 digit.", "error");
+    return;
+  }
+
+  const previous = store.adminPin;
+  store.adminPin = pin;
+  persistDatabaseWrite(() => dbUpsertAdminPin(pin)).then((saved) => {
+    if (!saved) store.adminPin = previous;
+    if (saved) store.adminPasswordForm.pin = "";
+    const passwordError = store.dbError.includes("admin_pin")
+      ? "Kolom admin_pin belum ada. Jalankan supabase-doko-admin-pin.sql dulu."
+      : "Password belum tersimpan ke database. Cek izin tabel doko_settings.";
+    showToast(saved ? "Password admin berhasil disimpan" : passwordError, saved ? "success" : "error");
+    render();
+  });
+  render();
+}
+
 function handleInput(event) {
   if (event.target.matches("[data-admin-pin]")) {
     store.adminPinInput = event.target.value.replace(/\D/g, "").slice(0, 4);
     event.target.value = store.adminPinInput;
     updateAdminPinDots();
+    return;
+  }
+
+  if (event.target.matches("[data-admin-password-pin]")) {
+    store.adminPasswordForm.pin = event.target.value.replace(/\D/g, "").slice(0, 4);
+    event.target.value = store.adminPasswordForm.pin;
     return;
   }
 
@@ -1347,6 +1665,11 @@ function handleKeydown(event) {
     event.preventDefault();
     unlockAdmin();
   }
+
+  if (event.key === "Enter" && event.target.matches("[data-admin-password-pin]")) {
+    event.preventDefault();
+    saveAdminPassword();
+  }
 }
 
 function updateAdminPinDots() {
@@ -1356,7 +1679,7 @@ function updateAdminPinDots() {
 }
 
 function unlockAdmin() {
-  if (store.adminPinInput === ADMIN_PIN) {
+  if (store.adminPinInput === store.adminPin) {
     store.adminUnlocked = true;
     store.adminPinInput = "";
     showToast("Admin berhasil dibuka", "success");
@@ -1421,20 +1744,20 @@ async function savePizza() {
     return;
   }
 
-  store.editingPizzaId = null;
-  store.pizzaFormOpen = false;
-  store.pizzaForm = { name: "", cost: "", price: "", active: true };
-  showToast("Data pizza berhasil disimpan", "success");
+  closePizzaForm();
+  showToast("Data produk berhasil disimpan", "success");
   render();
 }
 async function submitDailyData() {
   if (store.submitLoading) return;
   const today = isoDate(new Date());
   const attendance = store.attendance[today] || { in: null, out: null };
+  const submitType = store.inputPage === "stock" ? "stock" : "sales";
+  const submitLabel = submitType === "stock" ? "Stok" : "Penjualan";
 
   if (!attendance.in) {
     store.inputPage = "attendance";
-    showToast("Absen masuk dulu sebelum upload data harian.", "error");
+    showToast(`Absen masuk dulu sebelum submit ${submitLabel.toLowerCase()}.`, "error");
     render();
     return;
   }
@@ -1442,22 +1765,36 @@ async function submitDailyData() {
   store.submitLoading = true;
   render();
 
-  store.records[today] = {
-    sales: { ...store.inputDraft.sales },
-    stock: { ...store.inputDraft.stock },
-  };
+  const previousRecord = store.records[today]
+    ? { sales: { ...store.records[today].sales }, stock: { ...store.records[today].stock } }
+    : null;
+  const previousProgress = getDailyProgress(today);
+  const record = store.records[today] || { sales: {}, stock: {} };
+  record[submitType] = getDraftValues(submitType);
+  store.records[today] = record;
+  store.dailySubmitted[today] = { ...previousProgress, [submitType]: true };
 
   const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(today));
   store.submitLoading = false;
 
   if (!saved) {
+    if (previousRecord) {
+      store.records[today] = previousRecord;
+    } else {
+      delete store.records[today];
+    }
+    store.dailySubmitted[today] = previousProgress;
     render();
     return;
   }
 
-  store.dailySubmitted[today] = true;
-  store.inputPage = "attendance";
-  showToast("Data harian berhasil disimpan", "success");
+  if (submitType === "sales") {
+    store.inputPage = "stock";
+    showToast("Penjualan tersimpan. Lanjut isi stok.", "success");
+  } else {
+    store.inputPage = "stock";
+    showToast("Stok tersimpan. Absen pulang sudah bisa dipakai.", "success");
+  }
   render();
 }
 function toggleTimer(id) {
@@ -1602,20 +1939,78 @@ function capturePhoto() {
     canvas.getContext("2d").drawImage(video, 0, 0);
     store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.86);
   } else {
-    store.capturedPhoto = PIZZA_IMAGES.pepperoni;
+    store.capturedPhoto = null;
+    showToast("Kamera belum siap. Ambil foto ulang.", "error");
   }
   closeStream();
   render();
 }
 
+async function uploadAttendancePhoto(payload) {
+  if (!GAS_PHOTO_UPLOAD_URL) {
+    throw new Error("URL GAS upload foto belum diisi di app.js.");
+  }
+
+  const response = await fetch(GAS_PHOTO_UPLOAD_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ appId: DOKO_APP_ID, ...payload }),
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (error) {
+    throw new Error("Upload foto berhasil dipanggil, tetapi respons GAS tidak terbaca.");
+  }
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || "Gagal upload foto ke Google Drive.");
+  }
+  return data;
+}
 async function saveAttendance() {
   const today = isoDate(new Date());
+  if (store.attendanceMode === "out" && !isDailySubmitted(today)) {
+    closeCamera();
+    store.inputPage = getNextRequiredInputPage(today);
+    showToast("Submit penjualan dan stok dulu sebelum absen pulang.", "error");
+    render();
+    return;
+  }
+
+  if (!store.capturedPhoto?.startsWith("data:image/")) {
+    showToast("Ambil foto dulu sebelum simpan absensi.", "error");
+    render();
+    return;
+  }
+
   const record = store.attendance[today] || { in: null, out: null };
   const now = new Date();
-  const feedback = getAttendanceFeedback(store.attendanceMode, now);
-  record[store.attendanceMode] = {
-    time: now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
-    photo: store.capturedPhoto,
+  const mode = store.attendanceMode;
+  const time = now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+  const feedback = getAttendanceFeedback(mode, now);
+  showToast("Mengupload foto absensi...", "success");
+  let upload;
+  try {
+    upload = await uploadAttendancePhoto({
+      date: today,
+      mode,
+      time,
+      status: feedback.status,
+      message: feedback.message,
+      photo: store.capturedPhoto,
+    });
+  } catch (error) {
+    showToast(getErrorMessage(error), "error");
+    render();
+    return;
+  }
+
+  record[mode] = {
+    time,
+    photo: upload.photoUrl,
+    photoView: upload.webViewUrl,
+    photoFileId: upload.fileId,
     status: feedback.status,
     message: feedback.message,
   };
@@ -1627,7 +2022,9 @@ async function saveAttendance() {
     return;
   }
 
+  const savedMode = store.attendanceMode;
   closeCamera();
+  store.inputPage = savedMode === "in" ? "sales" : "attendance";
   showToast("Absensi berhasil disimpan", "success");
   render();
 }
@@ -1679,8 +2076,48 @@ function sumDraft(type) {
   return Object.values(store.inputDraft[type]).reduce((sum, qty) => sum + qty, 0);
 }
 
+function getDraftValues(type) {
+  return store.pizzas
+    .filter((pizza) => pizza.active)
+    .reduce((values, pizza) => {
+      values[pizza.id] = Number(store.inputDraft[type][pizza.id]) || 0;
+      return values;
+    }, {});
+}
+
+function getDailyProgress(date) {
+  const progress = store.dailySubmitted[date];
+  if (progress && typeof progress === "object") {
+    return { sales: Boolean(progress.sales), stock: Boolean(progress.stock) };
+  }
+  const submitted = Boolean(progress);
+  return { sales: submitted, stock: submitted };
+}
+
+function isSalesSubmitted(date) {
+  return getDailyProgress(date).sales;
+}
+
+function isStockSubmitted(date) {
+  return getDailyProgress(date).stock;
+}
+
 function isDailySubmitted(date) {
-  return Boolean(store.dailySubmitted[date]);
+  const progress = getDailyProgress(date);
+  return Boolean(progress.sales && progress.stock);
+}
+
+function getNextRequiredInputPage(date) {
+  if (!isSalesSubmitted(date)) return "sales";
+  if (!isStockSubmitted(date)) return "stock";
+  return "attendance";
+}
+
+function getCheckoutHint(date, attendance) {
+  if (!attendance.in) return "Absen masuk dulu";
+  if (!isSalesSubmitted(date)) return "Submit penjualan dulu";
+  if (!isStockSubmitted(date)) return "Submit stok dulu";
+  return "";
 }
 
 function filterDescription(dates) {
@@ -1696,10 +2133,11 @@ function viewerDateDescription(dates) {
 }
 
 function normalizeRoute(path) {
-  const segments = path.replace(/\/+$/, "").split("/").filter(Boolean);
-  const lastSegment = segments[segments.length - 1];
-  if (APP_ROUTES.has(lastSegment)) return `/${lastSegment}`;
-  return "/admin";
+  const route = path.replace(/\/+$/, "").split("/").filter(Boolean).pop();
+  if (route === "admin") return "/admin";
+  if (route === "input") return "/input";
+  if (route === "view") return "/view";
+  return "/";
 }
 
 function addDays(date, days) {
@@ -1837,7 +2275,25 @@ function showToast(message, type) {
   toast.textContent = message;
   toast.className = `toast ${type} show`;
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => {
-    toast.className = "toast";
-  }, 2600);
+  showToast.timer = setTimeout(hideToast, 2600);
 }
+
+function showConfirmToast(message) {
+  clearTimeout(showToast.timer);
+  toast.innerHTML = `
+    <span>${escapeHtml(message)}</span>
+    <div class="toast-actions">
+      <button type="button" data-cancel-delete-pizza>Tidak</button>
+      <button type="button" data-confirm-delete-pizza>Ya</button>
+    </div>
+  `;
+  toast.className = "toast confirm show";
+}
+
+function hideToast() {
+  toast.className = "toast";
+  toast.innerHTML = "";
+}
+
+
+
