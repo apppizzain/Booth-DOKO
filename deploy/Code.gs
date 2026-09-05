@@ -28,7 +28,7 @@ function doPost(e) {
 function doGet(e) {
   const params = e && e.parameter ? e.parameter : {};
   if (params.action === 'data') {
-    return renderPhotoData_(params.fileId, params.token, params.callback);
+    return renderPhotoData_(params.fileId, params.token, params.callback, params.size);
   }
   if (params.action === 'view') {
     return renderPhoto_(params.fileId, params.token);
@@ -103,7 +103,7 @@ function appendPhotoLog_(payload, saved) {
   ]);
 }
 
-function renderPhotoData_(fileId, token, callback) {
+function renderPhotoData_(fileId, token, callback, size) {
   const callbackName = safeCallback_(callback);
   try {
     if (!fileId || !token || !isKnownPhoto_(fileId, token)) {
@@ -111,7 +111,7 @@ function renderPhotoData_(fileId, token, callback) {
     }
 
     const file = DriveApp.getFileById(fileId);
-    const blob = file.getBlob();
+    const blob = resizePhotoBlob_(file.getBlob(), size);
     const dataUrl = `data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}`;
     return javascript_(`${callbackName}(${JSON.stringify({ ok: true, dataUrl: dataUrl })});`);
   } catch (error) {
@@ -119,6 +119,29 @@ function renderPhotoData_(fileId, token, callback) {
   }
 }
 
+function resizePhotoBlob_(blob, size) {
+  const maxSize = normalizePhotoSize_(size, 1000);
+  try {
+    const image = ImagesService.openImage(blob);
+    const width = image.getWidth();
+    const height = image.getHeight();
+    const longestSide = Math.max(width, height);
+    if (longestSide <= maxSize) return blob;
+    const scale = maxSize / longestSide;
+    return image
+      .resize(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)))
+      .getBlob()
+      .setContentType('image/jpeg');
+  } catch (error) {
+    return blob;
+  }
+}
+
+function normalizePhotoSize_(size, fallback) {
+  const parsed = Number(size || fallback || 1000);
+  if (!Number.isFinite(parsed)) return fallback || 1000;
+  return Math.min(Math.max(Math.round(parsed), 160), 1400);
+}
 function safeCallback_(callback) {
   const name = String(callback || 'pizzainPhotoCallback');
   return /^[A-Za-z_$][0-9A-Za-z_$]*(\.[A-Za-z_$][0-9A-Za-z_$]*)*$/.test(name)

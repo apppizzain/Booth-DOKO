@@ -129,6 +129,8 @@ const app = document.getElementById("app");
 const toast = document.getElementById("toast");
 let timerAudioContext = null;
 let timerAudioUnlocked = false;
+const photoDataCache = new Map();
+const photoDataLoading = new Set();
 
 window.addEventListener("popstate", render);
 document.addEventListener("pointerdown", unlockTimerAudio, { once: true });
@@ -435,6 +437,8 @@ function render() {
   if (store.attendancePhotoPreview) {
     app.insertAdjacentHTML("beforeend", renderPhotoPreviewModal());
   }
+
+  hydrateAttendanceThumbnails();
 }
 
 function shell(role, content) {
@@ -863,12 +867,21 @@ function isGasPhotoUrl(src) {
   return String(src || "").includes("action=view") || String(src || "").includes("script.google.com/macros/");
 }
 
+function photoCacheKey(src, size) {
+  return `${src}::${size}`;
+}
+
 function renderPhotoMedia(src, title, compact = false) {
   const safeTitle = escapeHtml(title || "Foto absensi");
+  const size = compact ? 220 : 1000;
+  const cachedSrc = isGasPhotoUrl(src) ? photoDataCache.get(photoCacheKey(src, size)) : "";
   if (compact && isGasPhotoUrl(src)) {
-    return `<span class="photo-thumb photo-gas-thumb"><span class="material-symbols-outlined">photo_camera</span></span>`;
+    if (cachedSrc) {
+      return `<img class="photo-thumb" alt="${safeTitle}" src="${escapeHtml(cachedSrc)}" />`;
+    }
+    return `<span class="photo-thumb photo-gas-thumb" data-gas-thumb-src="${escapeHtml(src)}" data-gas-thumb-title="${safeTitle}"><span class="spinner tiny"></span></span>`;
   }
-  return `<img class="${compact ? "photo-thumb" : "photo-preview-image"}" alt="${safeTitle}" src="${escapeHtml(src)}" />`;
+  return `<img class="${compact ? "photo-thumb" : "photo-preview-image"}" alt="${safeTitle}" src="${escapeHtml(cachedSrc || src)}" />`;
 }
 
 function renderAttendancePhotoThumb(record, type, date) {
@@ -2026,7 +2039,7 @@ function capturePhoto() {
   const video = document.getElementById("camera-video");
   if (video && video.videoWidth) {
     const canvas = document.createElement("canvas");
-    const targetWidth = Math.max(video.videoWidth, 1280);
+    const targetWidth = Math.min(video.videoWidth, 1280);
     const scale = targetWidth / video.videoWidth;
     canvas.width = Math.round(video.videoWidth * scale);
     canvas.height = Math.round(video.videoHeight * scale);
@@ -2034,7 +2047,7 @@ function capturePhoto() {
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.96);
+    store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.86);
   } else {
     store.capturedPhoto = null;
     showToast("Kamera belum siap. Ambil foto ulang.", "error");
@@ -2065,7 +2078,36 @@ async function uploadAttendancePhoto(payload) {
   }
   return data;
 }
-function loadGasPhotoData(src) {
+function updateGasThumbNodes(src, content, isError = false) {
+  document.querySelectorAll("[data-gas-thumb-src]").forEach((thumb) => {
+    if (thumb.dataset.gasThumbSrc !== src) return;
+    if (isError) {
+      thumb.classList.add("error");
+      thumb.innerHTML = `<span class="material-symbols-outlined">broken_image</span>`;
+      return;
+    }
+    const title = thumb.dataset.gasThumbTitle || "Foto absensi";
+    thumb.outerHTML = `<img class="photo-thumb" alt="${escapeHtml(title)}" src="${escapeHtml(content)}" />`;
+  });
+}
+
+function hydrateAttendanceThumbnails() {
+  document.querySelectorAll("[data-gas-thumb-src]").forEach((thumb) => {
+    const src = thumb.dataset.gasThumbSrc;
+    const cacheKey = photoCacheKey(src, 220);
+    if (!src || photoDataCache.has(cacheKey) || photoDataLoading.has(cacheKey)) return;
+    photoDataLoading.add(cacheKey);
+    loadGasPhotoData(src, 220)
+      .then((imageSrc) => {
+        photoDataCache.set(cacheKey, imageSrc);
+        updateGasThumbNodes(src, imageSrc);
+      })
+      .catch(() => updateGasThumbNodes(src, "", true))
+      .finally(() => photoDataLoading.delete(cacheKey));
+  });
+}
+
+function loadGasPhotoData(src, size = 1000) {
   return new Promise((resolve, reject) => {
     let url;
     try {
@@ -2080,7 +2122,7 @@ function loadGasPhotoData(src) {
     const timeout = setTimeout(() => {
       cleanup();
       reject(new Error("Foto belum dapat dimuat. Cek koneksi internet."));
-    }, 15000);
+    }, size <= 240 ? 9000 : 14000);
 
     function cleanup() {
       clearTimeout(timeout);
@@ -2098,6 +2140,7 @@ function loadGasPhotoData(src) {
     };
 
     url.searchParams.set("action", "data");
+    url.searchParams.set("size", String(size));
     url.searchParams.set("callback", callbackName);
     script.onerror = () => {
       cleanup();
@@ -2112,19 +2155,22 @@ async function openAttendancePhotoPreview(button) {
   const src = button.dataset.previewPhoto;
   const title = button.dataset.previewTitle || "Preview foto";
   const needsGasData = isGasPhotoUrl(src);
+  const cacheKey = photoCacheKey(src, 1000);
+  const cachedSrc = needsGasData ? photoDataCache.get(cacheKey) : "";
   store.attendancePhotoPreview = {
     src,
     title,
-    imageSrc: needsGasData ? "" : src,
-    loading: needsGasData,
+    imageSrc: cachedSrc || (needsGasData ? "" : src),
+    loading: needsGasData && !cachedSrc,
     error: "",
   };
   render();
 
-  if (!needsGasData) return;
+  if (!needsGasData || cachedSrc) return;
 
   try {
-    const imageSrc = await loadGasPhotoData(src);
+    const imageSrc = await loadGasPhotoData(src, 1000);
+    photoDataCache.set(cacheKey, imageSrc);
     if (store.attendancePhotoPreview?.src !== src) return;
     store.attendancePhotoPreview = { src, title, imageSrc, loading: false, error: "" };
   } catch (error) {
@@ -2468,7 +2514,6 @@ function hideToast() {
   toast.className = "toast";
   toast.innerHTML = "";
 }
-
 
 
 

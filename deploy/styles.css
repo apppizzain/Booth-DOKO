@@ -2542,46 +2542,62 @@ a {
   pointer-events: none;
 }
 
-.photo-preview-modal {
+.photo-preview-modal.modal.open {
+  display: grid;
   padding: 18px;
+  place-items: center;
 }
 
 .photo-preview-card {
-  background: #fff;
+  align-self: center;
+  background: transparent;
   border-radius: 12px;
   box-shadow: var(--shadow);
-  max-width: min(315px, calc(100vw - 72px));
+  display: inline-flex;
+  flex-direction: column;
+  justify-self: center;
+  max-height: calc(100dvh - 56px);
+  max-width: min(75vw, 315px);
   overflow: hidden;
-  width: 100%;
+  width: fit-content;
 }
 
 .photo-preview-card header {
   align-items: center;
+  background: #fff;
+  box-sizing: border-box;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: space-between;
-  padding: 12px;
+  padding: 10px 12px;
+  width: 100%;
 }
 
 .photo-preview-card header span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .photo-preview-card header h3 {
   font-family: Manrope, system-ui, sans-serif;
-  font-size: 16px;
+  font-size: 15px;
+  line-height: 1.25;
   margin: 2px 0 0;
 }
 
 .photo-preview-image {
-  background: #140c0d;
-  border: 0;
+  background: transparent;
+  border: 4px solid #fff;
+  border-radius: 0 0 12px 12px;
+  border-top: 0;
+  box-sizing: border-box;
   display: block;
-  max-height: 52dvh;
-  min-height: 270px;
+  height: auto;
+  max-height: 68dvh;
+  max-width: min(75vw, 315px);
+  min-height: 0;
   object-fit: contain;
   width: 100%;
 }
@@ -2614,23 +2630,30 @@ a {
   justify-content: center;
 }
 
-.photo-gas-thumb .material-symbols-outlined {
-  font-size: 30px;
+.photo-gas-thumb.error .material-symbols-outlined {
+  font-size: 28px;
+}
+
+.spinner.tiny {
+  border-width: 3px;
+  height: 22px;
+  width: 22px;
 }
 
 .photo-preview-state {
   align-items: center;
-  background: #140c0d;
-  color: #fff;
+  background: #fff7f7;
+  color: var(--red-deep);
   display: flex;
   flex-direction: column;
   font-size: 13px;
   font-weight: 800;
   gap: 10px;
   justify-content: center;
-  min-height: 270px;
+  min-height: 210px;
   padding: 20px;
   text-align: center;
+  width: min(75vw, 315px);
 }
 
 .photo-preview-state.error {
