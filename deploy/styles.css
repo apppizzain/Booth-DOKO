@@ -2550,7 +2550,7 @@ a {
   background: #fff;
   border-radius: 12px;
   box-shadow: var(--shadow);
-  max-width: min(420px, calc(100vw - 36px));
+  max-width: min(315px, calc(100vw - 72px));
   overflow: hidden;
   width: 100%;
 }
@@ -2576,13 +2576,12 @@ a {
   margin: 2px 0 0;
 }
 
-.photo-preview-image,
-.photo-preview-frame {
+.photo-preview-image {
   background: #140c0d;
   border: 0;
   display: block;
-  max-height: 70dvh;
-  min-height: 360px;
+  max-height: 52dvh;
+  min-height: 270px;
   object-fit: contain;
   width: 100%;
 }
@@ -2604,6 +2603,47 @@ a {
 .timer-title > div {
   flex: 1;
   min-width: 0;
+}
+
+
+
+.photo-gas-thumb {
+  align-items: center;
+  color: var(--red);
+  display: inline-flex;
+  justify-content: center;
+}
+
+.photo-gas-thumb .material-symbols-outlined {
+  font-size: 30px;
+}
+
+.photo-preview-state {
+  align-items: center;
+  background: #140c0d;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 10px;
+  justify-content: center;
+  min-height: 270px;
+  padding: 20px;
+  text-align: center;
+}
+
+.photo-preview-state.error {
+  background: #fff7f7;
+  color: var(--red-deep);
+}
+
+.photo-preview-state .material-symbols-outlined {
+  font-size: 34px;
+}
+
+.photo-preview-state p {
+  margin: 0;
 }
 
 

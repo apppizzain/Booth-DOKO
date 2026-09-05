@@ -864,12 +864,11 @@ function isGasPhotoUrl(src) {
 }
 
 function renderPhotoMedia(src, title, compact = false) {
-  const safeSrc = escapeHtml(src);
   const safeTitle = escapeHtml(title || "Foto absensi");
-  if (isGasPhotoUrl(src)) {
-    return `<iframe class="${compact ? "photo-thumb photo-frame-thumb" : "photo-preview-frame"}" title="${safeTitle}" src="${safeSrc}" loading="lazy"></iframe>`;
+  if (compact && isGasPhotoUrl(src)) {
+    return `<span class="photo-thumb photo-gas-thumb"><span class="material-symbols-outlined">photo_camera</span></span>`;
   }
-  return `<img class="${compact ? "photo-thumb" : "photo-preview-image"}" alt="${safeTitle}" src="${safeSrc}" />`;
+  return `<img class="${compact ? "photo-thumb" : "photo-preview-image"}" alt="${safeTitle}" src="${escapeHtml(src)}" />`;
 }
 
 function renderAttendancePhotoThumb(record, type, date) {
@@ -885,6 +884,11 @@ function renderAttendancePhotoThumb(record, type, date) {
 
 function renderPhotoPreviewModal() {
   const preview = store.attendancePhotoPreview;
+  const body = preview.loading
+    ? `<div class="photo-preview-state"><span class="spinner"></span><p>Memuat foto...</p></div>`
+    : preview.error
+      ? `<div class="photo-preview-state error"><span class="material-symbols-outlined">wifi_off</span><p>${escapeHtml(preview.error)}</p></div>`
+      : renderPhotoMedia(preview.imageSrc || preview.src, preview.title || "Preview foto absensi");
   return `
     <div class="modal open photo-preview-modal" role="dialog" aria-modal="true" aria-label="Preview foto absensi">
       <section class="photo-preview-card">
@@ -897,7 +901,7 @@ function renderPhotoPreviewModal() {
             <span class="material-symbols-outlined">close</span>
           </button>
         </header>
-        ${renderPhotoMedia(preview.src, preview.title || "Preview foto absensi")}
+        ${body}
       </section>
     </div>
   `;
@@ -1388,11 +1392,7 @@ function handleClick(event) {
 
   const photoPreviewButton = event.target.closest("[data-preview-photo]");
   if (photoPreviewButton) {
-    store.attendancePhotoPreview = {
-      src: photoPreviewButton.dataset.previewPhoto,
-      title: photoPreviewButton.dataset.previewTitle || "Preview foto",
-    };
-    render();
+    openAttendancePhotoPreview(photoPreviewButton);
     return;
   }
 
@@ -2065,6 +2065,80 @@ async function uploadAttendancePhoto(payload) {
   }
   return data;
 }
+function loadGasPhotoData(src) {
+  return new Promise((resolve, reject) => {
+    let url;
+    try {
+      url = new URL(src);
+    } catch (error) {
+      reject(new Error("URL foto tidak valid."));
+      return;
+    }
+
+    const callbackName = `pizzainPhoto_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement("script");
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Foto belum dapat dimuat. Cek koneksi internet."));
+    }, 15000);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      delete window[callbackName];
+      script.remove();
+    }
+
+    window[callbackName] = (data) => {
+      cleanup();
+      if (data?.ok && data.dataUrl) {
+        resolve(data.dataUrl);
+      } else {
+        reject(new Error(data?.error || "Foto belum dapat dimuat."));
+      }
+    };
+
+    url.searchParams.set("action", "data");
+    url.searchParams.set("callback", callbackName);
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Foto belum dapat dimuat. Cek koneksi internet."));
+    };
+    script.src = url.toString();
+    document.head.appendChild(script);
+  });
+}
+
+async function openAttendancePhotoPreview(button) {
+  const src = button.dataset.previewPhoto;
+  const title = button.dataset.previewTitle || "Preview foto";
+  const needsGasData = isGasPhotoUrl(src);
+  store.attendancePhotoPreview = {
+    src,
+    title,
+    imageSrc: needsGasData ? "" : src,
+    loading: needsGasData,
+    error: "",
+  };
+  render();
+
+  if (!needsGasData) return;
+
+  try {
+    const imageSrc = await loadGasPhotoData(src);
+    if (store.attendancePhotoPreview?.src !== src) return;
+    store.attendancePhotoPreview = { src, title, imageSrc, loading: false, error: "" };
+  } catch (error) {
+    if (store.attendancePhotoPreview?.src !== src) return;
+    store.attendancePhotoPreview = {
+      src,
+      title,
+      imageSrc: "",
+      loading: false,
+      error: getErrorMessage(error),
+    };
+  }
+  render();
+}
 async function saveAttendance() {
   const today = isoDate(new Date());
   if (store.attendanceMode === "out" && !isDailySubmitted(today)) {
@@ -2119,9 +2193,8 @@ async function saveAttendance() {
     return;
   }
 
-  const savedMode = store.attendanceMode;
   closeCamera();
-  store.inputPage = savedMode === "in" ? "sales" : "attendance";
+  store.inputPage = "attendance";
   showToast("Absensi berhasil disimpan", "success");
   render();
 }
@@ -2395,6 +2468,7 @@ function hideToast() {
   toast.className = "toast";
   toast.innerHTML = "";
 }
+
 
 
 

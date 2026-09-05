@@ -27,6 +27,9 @@ function doPost(e) {
 
 function doGet(e) {
   const params = e && e.parameter ? e.parameter : {};
+  if (params.action === 'data') {
+    return renderPhotoData_(params.fileId, params.token, params.callback);
+  }
   if (params.action === 'view') {
     return renderPhoto_(params.fileId, params.token);
   }
@@ -100,6 +103,34 @@ function appendPhotoLog_(payload, saved) {
   ]);
 }
 
+function renderPhotoData_(fileId, token, callback) {
+  const callbackName = safeCallback_(callback);
+  try {
+    if (!fileId || !token || !isKnownPhoto_(fileId, token)) {
+      return javascript_(`${callbackName}(${JSON.stringify({ ok: false, error: 'Foto tidak tersedia.' })});`);
+    }
+
+    const file = DriveApp.getFileById(fileId);
+    const blob = file.getBlob();
+    const dataUrl = `data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}`;
+    return javascript_(`${callbackName}(${JSON.stringify({ ok: true, dataUrl: dataUrl })});`);
+  } catch (error) {
+    return javascript_(`${callbackName}(${JSON.stringify({ ok: false, error: error.message || String(error) })});`);
+  }
+}
+
+function safeCallback_(callback) {
+  const name = String(callback || 'pizzainPhotoCallback');
+  return /^[A-Za-z_$][0-9A-Za-z_$]*(\.[A-Za-z_$][0-9A-Za-z_$]*)*$/.test(name)
+    ? name
+    : 'pizzainPhotoCallback';
+}
+
+function javascript_(source) {
+  return ContentService
+    .createTextOutput(source)
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
 function renderPhoto_(fileId, token) {
   if (!fileId || !token || !isKnownPhoto_(fileId, token)) {
     return HtmlService.createHtmlOutput('<p>Foto tidak tersedia.</p>');
@@ -177,3 +208,4 @@ function escapeHtml_(value) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
