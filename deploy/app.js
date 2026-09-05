@@ -1185,13 +1185,13 @@ function renderViewer(options = {}) {
         ${isCustom ? renderCalendarRange() : ""}
         <div class="loading-line">${store.viewerLoading ? `<span class="loading-dot"></span>Memuat laporan...` : `<span></span>${viewerDateDescription(selectedDates)}`}</div>
       </section>
-      ${renderViewerTotals(summary, isCustom || selectedDates.length > 1)}
       <section class="panel viewer-list-panel">
         <div class="viewer-list-title">
           <h3>Detail Pizza Terjual</h3>
         </div>
         ${renderVariantReports(selectedDates, { showMoney: false, compact: true })}
       </section>
+      ${renderViewerTotals(summary, isCustom || selectedDates.length > 1)}
     </main>
   `;
 }
@@ -1201,6 +1201,7 @@ function viewerFilterButton(filter, label) {
 }
 
 function renderViewerTotals(summary, rangeMode) {
+  const salesFormula = rupiah(summary.revenue);
   const feeFormula = `${summary.slices} slice x ${rupiah(store.ownerFee)} =`;
   const pizzainFormula = `${rupiah(summary.revenue)} - ${rupiah(summary.ownerShare)} =`;
 
@@ -1212,6 +1213,7 @@ function renderViewerTotals(summary, rangeMode) {
       <div class="viewer-summary-row">
         <div class="viewer-summary-copy">
           <span class="viewer-summary-title">Penjualan</span>
+          <em class="viewer-summary-formula">${salesFormula}</em>
         </div>
         <strong class="viewer-summary-value">${summary.slices} slice</strong>
       </div>
@@ -1224,7 +1226,7 @@ function renderViewerTotals(summary, rangeMode) {
       </div>
       <div class="viewer-summary-row highlight">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Omzet</span>
+          <span class="viewer-summary-title">Omzet Pizzain</span>
           <em class="viewer-summary-formula">${pizzainFormula}</em>
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.afterFee)}</strong>
@@ -2039,15 +2041,15 @@ function capturePhoto() {
   const video = document.getElementById("camera-video");
   if (video && video.videoWidth) {
     const canvas = document.createElement("canvas");
-    const targetWidth = Math.min(video.videoWidth, 1280);
-    const scale = targetWidth / video.videoWidth;
+    const longestSide = Math.max(video.videoWidth, video.videoHeight);
+    const scale = Math.min(1, 640 / longestSide);
     canvas.width = Math.round(video.videoWidth * scale);
     canvas.height = Math.round(video.videoHeight * scale);
     const context = canvas.getContext("2d");
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.86);
+    store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.52);
   } else {
     store.capturedPhoto = null;
     showToast("Kamera belum siap. Ambil foto ulang.", "error");
@@ -2094,10 +2096,10 @@ function updateGasThumbNodes(src, content, isError = false) {
 function hydrateAttendanceThumbnails() {
   document.querySelectorAll("[data-gas-thumb-src]").forEach((thumb) => {
     const src = thumb.dataset.gasThumbSrc;
-    const cacheKey = photoCacheKey(src, 220);
+    const cacheKey = photoCacheKey(src, 140);
     if (!src || photoDataCache.has(cacheKey) || photoDataLoading.has(cacheKey)) return;
     photoDataLoading.add(cacheKey);
-    loadGasPhotoData(src, 220)
+    loadGasPhotoData(src, 140)
       .then((imageSrc) => {
         photoDataCache.set(cacheKey, imageSrc);
         updateGasThumbNodes(src, imageSrc);
@@ -2155,7 +2157,7 @@ async function openAttendancePhotoPreview(button) {
   const src = button.dataset.previewPhoto;
   const title = button.dataset.previewTitle || "Preview foto";
   const needsGasData = isGasPhotoUrl(src);
-  const cacheKey = photoCacheKey(src, 1000);
+  const cacheKey = photoCacheKey(src, 640);
   const cachedSrc = needsGasData ? photoDataCache.get(cacheKey) : "";
   store.attendancePhotoPreview = {
     src,
@@ -2169,7 +2171,7 @@ async function openAttendancePhotoPreview(button) {
   if (!needsGasData || cachedSrc) return;
 
   try {
-    const imageSrc = await loadGasPhotoData(src, 1000);
+    const imageSrc = await loadGasPhotoData(src, 640);
     photoDataCache.set(cacheKey, imageSrc);
     if (store.attendancePhotoPreview?.src !== src) return;
     store.attendancePhotoPreview = { src, title, imageSrc, loading: false, error: "" };
