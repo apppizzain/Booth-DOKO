@@ -149,6 +149,7 @@ document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
 document.addEventListener("keydown", handleKeydown);
 document.addEventListener("focusin", handleFocusIn);
+document.addEventListener("focusout", handleFocusOut);
 setInterval(updateTimers, 1000);
 
 updateVisibleViewport();
@@ -158,7 +159,9 @@ initializeDatabase();
 function updateVisibleViewport() {
   const viewport = window.visualViewport;
   const height = viewport ? viewport.height : window.innerHeight;
+  const top = viewport ? viewport.offsetTop : 0;
   document.documentElement.style.setProperty("--visible-vh", `${Math.round(height)}px`);
+  document.documentElement.style.setProperty("--visible-top", `${Math.round(top)}px`);
 }
 
 async function initializeDatabase() {
@@ -1968,13 +1971,41 @@ function handleKeydown(event) {
 
 function handleFocusIn(event) {
   if (!event.target.matches("[data-admin-pin], [data-admin-password-pin]")) return;
+  document.body.classList.add("pin-keyboard-active");
   updateVisibleViewport();
+  [60, 180, 360, 620].forEach((delay) => {
+    setTimeout(() => centerFocusedAdminPanel(event.target), delay);
+  });
+}
+
+function handleFocusOut(event) {
+  if (!event.target.matches("[data-admin-pin], [data-admin-password-pin]")) return;
   setTimeout(() => {
-    event.target.closest(".admin-pin-card, .admin-password-panel")?.scrollIntoView({
-      block: "center",
-      behavior: "smooth",
-    });
-  }, 180);
+    if (!document.activeElement?.matches("[data-admin-pin], [data-admin-password-pin]")) {
+      document.body.classList.remove("pin-keyboard-active");
+      updateVisibleViewport();
+    }
+  }, 80);
+}
+
+function centerFocusedAdminPanel(target) {
+  const panel = target.closest(".admin-pin-card, .admin-password-panel");
+  if (!panel) return;
+
+  updateVisibleViewport();
+  const viewport = window.visualViewport;
+  const viewportHeight = viewport ? viewport.height : window.innerHeight;
+  const viewportTop = viewport ? viewport.offsetTop : 0;
+  const topbarHeight = document.querySelector(".topbar")?.getBoundingClientRect().height || 68;
+  const rect = panel.getBoundingClientRect();
+  const safeVisibleHeight = Math.max(220, viewportHeight - topbarHeight);
+  const targetCenter = viewportTop + topbarHeight + safeVisibleHeight / 2;
+  const panelCenter = rect.top + rect.height / 2;
+  const delta = panelCenter - targetCenter;
+
+  if (Math.abs(delta) > 8) {
+    window.scrollBy({ top: delta, behavior: "smooth" });
+  }
 }
 
 function updateAdminPinDots() {
@@ -1987,12 +2018,15 @@ function unlockAdmin() {
   if (store.adminPinInput === store.adminPin) {
     store.adminUnlocked = true;
     store.adminPinInput = "";
+    document.body.classList.remove("pin-keyboard-active");
+    updateVisibleViewport();
     showToast("Admin berhasil dibuka", "success");
     render();
     return;
   }
 
   store.adminPinInput = "";
+  centerFocusedAdminPanel(document.querySelector("[data-admin-pin]"));
   showToast("PIN admin salah.", "error");
   render();
 }

@@ -18,6 +18,7 @@
   --shadow: 0 18px 45px rgba(95, 25, 25, 0.08);
   --radius: 8px;
   --visible-vh: 100dvh;
+  --topbar-height: 68px;
 }
 
 * {
@@ -75,7 +76,8 @@ a {
 }
 
 .shell {
-  min-height: 100dvh;
+  min-height: var(--visible-vh);
+  padding-top: calc(var(--topbar-height) + env(safe-area-inset-top, 0px));
 }
 
 .topbar {
@@ -85,11 +87,13 @@ a {
   border-bottom: 1px solid rgba(234, 216, 213, 0.72);
   display: flex;
   gap: 14px;
-  height: 68px;
+  height: var(--topbar-height);
   justify-content: space-between;
   padding: 0 18px;
-  position: sticky;
-  top: 0;
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 0;
+  right: 0;
   z-index: 20;
 }
 
@@ -2156,9 +2160,17 @@ a {
   align-items: center;
   align-content: center;
   display: grid;
-  min-height: calc(var(--visible-vh) - 68px);
-  padding: clamp(14px, 4vh, 34px) 16px;
+  min-height: calc(var(--visible-vh) - var(--topbar-height) - env(safe-area-inset-top, 0px));
+  padding: clamp(12px, 4vh, 30px) 16px max(18px, env(safe-area-inset-bottom, 0px));
+  scroll-margin-top: calc(var(--topbar-height) + 12px);
   transition: min-height 0.18s ease, padding 0.18s ease;
+}
+
+body.pin-keyboard-active .admin-pin-screen {
+  align-content: center;
+  min-height: calc(var(--visible-vh) - var(--topbar-height) - env(safe-area-inset-top, 0px));
+  padding-top: 8px;
+  padding-bottom: max(38vh, 180px, env(safe-area-inset-bottom, 0px));
 }
 
 .admin-pin-card {
