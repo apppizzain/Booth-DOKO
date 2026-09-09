@@ -19,7 +19,7 @@
   --radius: 8px;
   --visible-vh: 100dvh;
   --topbar-height: 68px;
-  --statusbar-space: max(env(safe-area-inset-top, 0px), 14px);
+  --statusbar-space: max(env(safe-area-inset-top, 0px), 34px);
 }
 
 * {
@@ -78,7 +78,7 @@ a {
 
 .shell {
   min-height: var(--visible-vh);
-  padding-top: calc(var(--topbar-height) + var(--statusbar-space));
+  padding-top: 0;
 }
 
 .pin-shell {
@@ -95,10 +95,8 @@ a {
   height: calc(var(--topbar-height) + var(--statusbar-space));
   justify-content: space-between;
   padding: var(--statusbar-space) 18px 0;
-  position: fixed;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
   z-index: 20;
 }
 
