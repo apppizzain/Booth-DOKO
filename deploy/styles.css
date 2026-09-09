@@ -675,6 +675,43 @@ a {
   padding: 12px;
 }
 
+.attendance-record-copy {
+  min-width: 0;
+}
+
+.attendance-record-times {
+  display: grid;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.attendance-record-times p {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  margin: 0;
+}
+
+.attendance-record-times span {
+  color: var(--muted);
+  display: inline-block;
+  min-width: 44px;
+}
+
+.attendance-record-times strong {
+  color: var(--ink);
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.attendance-record-photos {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 6px;
+  grid-template-columns: repeat(2, 48px);
+}
+
 .pizza-info {
   align-items: center;
   display: flex;
@@ -2927,6 +2964,47 @@ body.pin-keyboard-active .admin-pin-screen {
   border: 0;
   cursor: pointer;
   padding: 0;
+}
+
+.attendance-photo-slot {
+  border-radius: 10px;
+  height: 56px;
+  overflow: hidden;
+  position: relative;
+  width: 48px;
+}
+
+.attendance-photo-slot .photo-thumb,
+.attendance-photo-slot.photo-thumb {
+  border-radius: 10px;
+  height: 56px;
+  width: 48px;
+}
+
+.attendance-photo-slot > span {
+  align-items: center;
+  background: rgba(159, 8, 32, 0.84);
+  bottom: 0;
+  color: #fff;
+  display: flex;
+  font-size: 8px;
+  font-weight: 900;
+  justify-content: center;
+  left: 0;
+  line-height: 1;
+  padding: 3px 2px;
+  position: absolute;
+  right: 0;
+  text-transform: uppercase;
+}
+
+.attendance-photo-slot.photo-empty > span {
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  inset: auto 0 50%;
+  padding: 0;
+  transform: translateY(50%);
 }
 
 .photo-thumb-button:focus-visible {

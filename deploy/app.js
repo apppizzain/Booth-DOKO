@@ -1021,15 +1021,21 @@ function renderAttendanceRecord(date) {
   const type = store.attendanceFilter === "early-out" ? "out" : "in";
   const record = item[type];
   const feedback = record ? getAttendanceFeedbackFromTime(type, record.time) : null;
+  const inFeedback = item.in ? getAttendanceFeedbackFromTime("in", item.in.time) : null;
+  const outFeedback = item.out ? getAttendanceFeedbackFromTime("out", item.out.time) : null;
   return `
     <article class="attendance-record">
-      <div>
+      <div class="attendance-record-copy">
         <h4>${formatDate(date)}</h4>
-        <p>${type === "out" ? "Pulang" : "Masuk"}: ${record?.time || "-"}</p>
+        <div class="attendance-record-times">
+          <p><span>Masuk</span><strong>${item.in?.time || "-"}</strong></p>
+          <p><span>Pulang</span><strong>${item.out?.time || "-"}</strong></p>
+        </div>
         ${feedback ? `<span class="attendance-record-badge ${feedback.status}">${feedback.badge}</span>` : ""}
       </div>
-      <div class="counter">
-        ${renderAttendancePhotoThumb(record, type, date)}
+      <div class="attendance-record-photos" aria-label="Foto absensi ${formatDate(date)}">
+        ${renderAttendancePhotoThumb(item.in, "in", date, inFeedback?.badge)}
+        ${renderAttendancePhotoThumb(item.out, "out", date, outFeedback?.badge)}
       </div>
     </article>
   `;
@@ -1077,13 +1083,14 @@ function renderPhotoMedia(src, title, compact = false) {
   return `<img class="${compact ? "photo-thumb" : "photo-preview-image"}" alt="${safeTitle}" src="${escapeHtml(cachedSrc || src)}" />`;
 }
 
-function renderAttendancePhotoThumb(record, type, date) {
+function renderAttendancePhotoThumb(record, type, date, badge = "") {
   const label = type === "out" ? "Pulang" : "Masuk";
-  if (!record?.photo) return `<span class="photo-thumb photo-empty">${label}</span>`;
+  if (!record?.photo) return `<span class="photo-thumb photo-empty attendance-photo-slot"><span>${label}</span></span>`;
   const title = `${label} - ${formatDate(date)} ${record.time || ""}`.trim();
   return `
-    <button class="photo-thumb-button" data-preview-photo="${escapeHtml(record.photo)}" data-preview-title="${escapeHtml(title)}" aria-label="Preview foto absen ${label.toLowerCase()}">
+    <button class="photo-thumb-button attendance-photo-slot" data-preview-photo="${escapeHtml(record.photo)}" data-preview-title="${escapeHtml(title)}" aria-label="Preview foto absen ${label.toLowerCase()}">
       ${renderPhotoMedia(record.photo, `Foto absen ${label.toLowerCase()}`, true)}
+      <span>${label}${badge ? ` - ${escapeHtml(badge)}` : ""}</span>
     </button>
   `;
 }
