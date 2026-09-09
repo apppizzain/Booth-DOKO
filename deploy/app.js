@@ -14,6 +14,13 @@ const SUPABASE_URL = "https://qipqhopjbwjquschrggt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpcHFob3BqYndqcXVzY2hyZ2d0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NjQ1MDYsImV4cCI6MjA5NzQ0MDUwNn0._LAfxDUc7JDb8SfGjL-XwoeC2ECbrJvDoEKx4_iTuH0";
 const DOKO_APP_ID = "pizzain_doko_v1";
 const GAS_PHOTO_UPLOAD_URL = "https://script.google.com/macros/s/AKfycbyiQGAfG_AJSwMAaGTwsl1G5CiYmgKgBXyOuji9nsG4VOJ5hegolFL_bdroypwc8cT1AQ/exec";
+const ATTENDANCE_SETTINGS_KEY = `${DOKO_APP_ID}:attendance_settings`;
+const DAILY_EXPENSES_KEY = `${DOKO_APP_ID}:daily_expenses`;
+const DEFAULT_ATTENDANCE_SETTINGS = {
+  checkIn: "16:00",
+  checkOut: "23:00",
+  toleranceMinutes: 0,
+};
 
 const store = {
   ownerFee: 2000,
@@ -25,6 +32,7 @@ const store = {
   adminPasswordForm: {
     pin: "",
   },
+  attendanceSettings: { ...DEFAULT_ATTENDANCE_SETTINGS },
   inputPage: "attendance",
   viewerFilter: "today",
   rangeStart: isoDate(new Date()),
@@ -38,6 +46,7 @@ const store = {
   editingPizzaId: null,
   pizzaFormOpen: false,
   deleteConfirmPizzaId: null,
+  deleteConfirmExpense: null,
   attendanceMode: null,
   cameraStream: null,
   cameraFacing: "user",
@@ -53,6 +62,11 @@ const store = {
     sales: {},
     stock: {},
   },
+  expenseForm: {
+    note: "",
+    amount: "",
+  },
+  dailyExpenses: {},
   dailyEditUnlocked: {
     sales: false,
     stock: false,
@@ -153,6 +167,8 @@ document.addEventListener("focusout", handleFocusOut);
 setInterval(updateTimers, 1000);
 
 updateVisibleViewport();
+loadAttendanceSettings();
+loadDailyExpenses();
 render();
 initializeDatabase();
 
@@ -197,6 +213,7 @@ async function loadRemoteData() {
     await dbUpsertSetting(store.ownerFee);
   }
   await loadAdminPinSetting();
+  await loadRemoteAttendanceSettings();
 
   if (pizzaRows.length) {
     store.pizzas = pizzaRows.map((row) => ({
@@ -235,6 +252,7 @@ async function loadRemoteData() {
     store.inputDraft.sales = { ...store.records[today].sales };
     store.inputDraft.stock = { ...store.records[today].stock };
   }
+  await loadRemoteDailyExpenses();
 }
 
 async function dbSelect(table, query) {
@@ -250,6 +268,61 @@ async function loadAdminPinSetting() {
     console.warn("Admin PIN column is not ready yet", error);
     store.adminPin = DEFAULT_ADMIN_PIN;
   }
+}
+
+async function loadRemoteAttendanceSettings() {
+  try {
+    const rows = await dbSelect(
+      "doko_settings",
+      `app_id=eq.${DOKO_APP_ID}&select=attendance_check_in,attendance_check_out,attendance_tolerance_minutes&limit=1`
+    );
+    if (!rows?.[0]) return;
+    store.attendanceSettings = normalizeAttendanceSettings({
+      checkIn: rows[0].attendance_check_in,
+      checkOut: rows[0].attendance_check_out,
+      toleranceMinutes: rows[0].attendance_tolerance_minutes,
+    });
+    saveLocalAttendanceSettings(store.attendanceSettings);
+  } catch (error) {
+    console.warn("Attendance settings columns are not ready yet", error);
+  }
+}
+
+async function loadRemoteDailyExpenses() {
+  try {
+    const rows = await dbSelect(
+      "doko_daily_expenses",
+      `app_id=eq.${DOKO_APP_ID}&select=id,record_date,note,amount,created_at&order=record_date.desc,created_at.desc`
+    );
+    const remoteExpenses = rows.reduce((itemsByDate, row) => {
+      const date = row.record_date;
+      if (!itemsByDate[date]) itemsByDate[date] = [];
+      itemsByDate[date].push({
+        id: row.id,
+        note: row.note,
+        amount: Number(row.amount) || 0,
+        createdAt: row.created_at || "",
+      });
+      return itemsByDate;
+    }, {});
+    store.dailyExpenses = normalizeDailyExpenses({
+      ...store.dailyExpenses,
+      ...remoteExpenses,
+    });
+    saveLocalDailyExpenses();
+    syncLocalDailyExpensesToRemote(remoteExpenses);
+  } catch (error) {
+    console.warn("Daily expenses table is not ready yet", error);
+  }
+}
+
+function syncLocalDailyExpensesToRemote(remoteExpenses = {}) {
+  const remoteIds = new Set(Object.values(remoteExpenses).flat().map((expense) => expense.id));
+  getExpensesForDates(Object.keys(store.dailyExpenses))
+    .filter((expense) => !remoteIds.has(expense.id))
+    .forEach((expense) => {
+      syncDailyExpenseWrite(() => dbUpsertDailyExpense(expense.date, expense));
+    });
 }
 
 async function dbUpsert(table, row, conflictColumns) {
@@ -303,6 +376,22 @@ async function dbUpsertAdminPin(pin) {
   );
 }
 
+async function dbUpsertAttendanceSettings(settings) {
+  const next = normalizeAttendanceSettings(settings);
+  return dbUpsert(
+    "doko_settings",
+    {
+      app_id: DOKO_APP_ID,
+      owner_fee: store.ownerFee,
+      attendance_check_in: next.checkIn,
+      attendance_check_out: next.checkOut,
+      attendance_tolerance_minutes: next.toleranceMinutes,
+      updated_at: new Date().toISOString(),
+    },
+    "app_id"
+  );
+}
+
 async function dbUpsertPizza(pizza, sortOrder = store.pizzas.findIndex((item) => item.id === pizza.id)) {
   return dbUpsert(
     "doko_pizzas",
@@ -341,6 +430,29 @@ async function dbUpsertPizzas(pizzas) {
 }
 async function dbDeletePizza(id) {
   return dbRequest(`doko_pizzas?app_id=eq.${DOKO_APP_ID}&id=eq.${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    prefer: "return=minimal",
+  });
+}
+
+async function dbUpsertDailyExpense(date, expense) {
+  return dbUpsert(
+    "doko_daily_expenses",
+    {
+      app_id: DOKO_APP_ID,
+      id: expense.id,
+      record_date: date,
+      note: expense.note,
+      amount: expense.amount,
+      created_at: expense.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    "app_id,id"
+  );
+}
+
+async function dbDeleteDailyExpense(id) {
+  return dbRequest(`doko_daily_expenses?app_id=eq.${DOKO_APP_ID}&id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",
     prefer: "return=minimal",
   });
@@ -571,6 +683,7 @@ function renderAdminDashboard(summary) {
       ${store.viewerFilter === "custom" ? renderCalendarRange() : ""}
       <div class="loading-line">${store.viewerLoading ? `<span class="loading-dot"></span>Memuat laporan...` : `<span></span>${viewerDateDescription(selectedDates)}`}</div>
     </section>
+    ${selectedDate ? renderDailyExpenseForm(selectedDate) : ""}
     <section class="viewer-report-summary admin-report-summary">
       <div class="viewer-card-head">
         <h3>Laporan Penjualan</h3>
@@ -583,13 +696,13 @@ function renderAdminDashboard(summary) {
       </div>
       <div class="viewer-summary-row">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Omzet</span>
+          <span class="viewer-summary-title">Omzet Kotor</span>
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.revenue)}</strong>
       </div>
       <div class="viewer-summary-row">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Modal</span>
+          <span class="viewer-summary-title">Modal (HPP)</span>
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.cost)}</strong>
       </div>
@@ -599,9 +712,15 @@ function renderAdminDashboard(summary) {
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.ownerShare)}</strong>
       </div>
+      <div class="viewer-summary-row">
+        <div class="viewer-summary-copy">
+          <span class="viewer-summary-title">Pengeluaran</span>
+        </div>
+        <strong class="viewer-summary-value">${rupiah(summary.expenses)}</strong>
+      </div>
       <div class="viewer-summary-row highlight">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Laba</span>
+          <span class="viewer-summary-title">Laba Bersih</span>
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.net)}</strong>
       </div>
@@ -627,6 +746,28 @@ function renderAdminDashboard(summary) {
           </section>`
         : ""
     }
+    ${renderExpenseList(selectedDates)}
+  `;
+}
+
+function renderDailyExpenseForm(date) {
+  return `
+    <section class="panel daily-expense-panel">
+      <div class="daily-expense-head">
+        <div>
+          <span>Pengeluaran Harian</span>
+        </div>
+        <button class="btn daily-expense-save" type="button" data-save-daily-expense>Simpan</button>
+      </div>
+      <div class="daily-expense-form">
+        <label for="daily-expense-note">
+          <input id="daily-expense-note" data-expense-note value="${escapeHtml(store.expenseForm.note)}" placeholder="Keterangan" aria-label="Keterangan pengeluaran" />
+        </label>
+        <label for="daily-expense-amount">
+          <input id="daily-expense-amount" data-expense-amount inputmode="numeric" value="${escapeHtml(store.expenseForm.amount)}" placeholder="Nominal" aria-label="Nominal pengeluaran" />
+        </label>
+      </div>
+    </section>
   `;
 }
 
@@ -738,7 +879,7 @@ function renderStockConsistencyCheck(date) {
     <div class="admin-list-head check">
       <div>
         <h3>Cek Kesesuaian Stok</h3>
-        <p>${shortDate(previousDate)} ke ${shortDate(date)}</p>
+        <p>${shortDate(previousDate)} - ${shortDate(date)}</p>
       </div>
       <span class="${issueCount ? "warning" : "ok"}">${issueCount ? `${issueCount} Selisih` : "Sesuai"}</span>
     </div>
@@ -757,6 +898,46 @@ function renderStockConsistencyCheck(date) {
         )
         .join("")}
     </div>
+  `;
+}
+
+function renderExpenseList(dates) {
+  const expenses = getExpensesForDates(dates);
+  const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  return `
+    <section class="panel admin-list-panel daily-expense-list-panel">
+      <div class="admin-list-head expense">
+        <div>
+          <h3>Daftar Pengeluaran</h3>
+          <p>${ticketDateDescription(dates)}</p>
+        </div>
+        <span>${rupiah(total)}</span>
+      </div>
+      <div class="daily-expense-list">
+        ${
+          expenses.length
+            ? expenses
+                .map(
+                  (expense) => `
+                    <article class="daily-expense-row">
+                      <div>
+                        <h4>${escapeHtml(expense.note)}</h4>
+                        <p>${formatDate(expense.date)}</p>
+                      </div>
+                      <div class="daily-expense-actions">
+                        <strong>${rupiah(expense.amount)}</strong>
+                        <button type="button" data-delete-daily-expense="${escapeHtml(expense.id)}" data-date="${expense.date}" aria-label="Hapus pengeluaran ${escapeHtml(expense.note)}">
+                          <span class="material-symbols-outlined">close</span>
+                        </button>
+                      </div>
+                    </article>
+                  `
+                )
+                .join("")
+            : `<p class="muted daily-expense-empty">Belum ada pengeluaran.</p>`
+        }
+      </div>
+    </section>
   `;
 }
 
@@ -890,6 +1071,7 @@ function renderManagePizza() {
       </section>
     ` : ""}
     ${renderOwnerFee()}
+    ${renderAttendanceSettings()}
     ${renderAdminPassword()}
   `;
 }
@@ -934,6 +1116,36 @@ function renderOwnerFee() {
         <span>Nominal</span>
         <input id="owner-fee" data-owner-fee inputmode="numeric" value="${store.ownerFee}" />
       </label>
+    </section>
+  `;
+}
+
+function renderAttendanceSettings() {
+  const settings = getAttendanceSettings();
+  return `
+    <section class="panel attendance-settings-panel">
+      <div class="attendance-settings-head">
+        <div>
+          <span>Jam Absensi</span>
+          <strong>Masuk ${displayClock(settings.checkIn)} | Pulang ${displayClock(settings.checkOut)}</strong>
+        </div>
+        <button class="btn attendance-settings-save-btn" data-save-attendance-settings aria-label="Simpan jam absensi">Simpan</button>
+      </div>
+      <div class="attendance-settings-grid">
+        <label class="attendance-setting-field" for="attendance-check-in">
+          <span>Jam Masuk</span>
+          <input id="attendance-check-in" type="time" data-attendance-setting="checkIn" value="${escapeHtml(settings.checkIn)}" />
+        </label>
+        <label class="attendance-setting-field" for="attendance-check-out">
+          <span>Jam Pulang</span>
+          <input id="attendance-check-out" type="time" data-attendance-setting="checkOut" value="${escapeHtml(settings.checkOut)}" />
+        </label>
+        <label class="attendance-setting-field attendance-setting-wide" for="attendance-tolerance">
+          <span>Toleransi</span>
+          <input id="attendance-tolerance" inputmode="numeric" data-attendance-setting="toleranceMinutes" value="${settings.toleranceMinutes}" />
+          <small>menit</small>
+        </label>
+      </div>
     </section>
   `;
 }
@@ -1078,19 +1290,19 @@ function renderPhotoMedia(src, title, compact = false) {
     if (cachedSrc) {
       return `<img class="photo-thumb" alt="${safeTitle}" src="${escapeHtml(cachedSrc)}" />`;
     }
-    return `<span class="photo-thumb photo-gas-thumb" data-gas-thumb-src="${escapeHtml(src)}" data-gas-thumb-title="${safeTitle}"><span class="spinner tiny"></span></span>`;
+    return `<span class="photo-thumb photo-gas-thumb" data-gas-thumb-src="${escapeHtml(src)}" data-gas-thumb-size="${size}" data-gas-thumb-title="${safeTitle}"><span class="spinner tiny"></span></span>`;
   }
   return `<img class="${compact ? "photo-thumb" : "photo-preview-image"}" alt="${safeTitle}" src="${escapeHtml(cachedSrc || src)}" />`;
 }
 
 function renderAttendancePhotoThumb(record, type, date, badge = "") {
   const label = type === "out" ? "Pulang" : "Masuk";
-  if (!record?.photo) return `<span class="photo-thumb photo-empty attendance-photo-slot"><span>${label}</span></span>`;
+  if (!record?.photo) return `<span class="photo-thumb photo-empty attendance-photo-slot"><span class="attendance-photo-label">${label}</span></span>`;
   const title = `${label} - ${formatDate(date)} ${record.time || ""}`.trim();
   return `
     <button class="photo-thumb-button attendance-photo-slot" data-preview-photo="${escapeHtml(record.photo)}" data-preview-title="${escapeHtml(title)}" aria-label="Preview foto absen ${label.toLowerCase()}">
       ${renderPhotoMedia(record.photo, `Foto absen ${label.toLowerCase()}`, true)}
-      <span>${label}${badge ? ` - ${escapeHtml(badge)}` : ""}</span>
+      <span class="attendance-photo-label">${label}${badge ? ` - ${escapeHtml(badge)}` : ""}</span>
     </button>
   `;
 }
@@ -1159,13 +1371,17 @@ function renderInputPage({ today, attendance, activePizzas }) {
 
 function renderInputAttendance(today, attendance) {
   const canCheckOut = Boolean(attendance.in && isDailySubmitted(today));
+  const settings = getAttendanceSettings();
   return `
     <section class="panel stack">
       <div class="section-title">
         <span class="icon-tile"><span class="material-symbols-outlined">badge</span></span>
         <div>
           <h3>Absensi Hari Ini</h3>
-          <p>${formatDate(today)} | Jam kerja 16.00 - 23.00</p>
+          <p class="input-attendance-meta">
+            <strong>${formatDate(today)}</strong>
+            <span>Jam kerja ${displayClock(settings.checkIn)} - ${displayClock(settings.checkOut)}</span>
+          </p>
         </div>
       </div>
       <div class="attendance-actions">
@@ -1627,13 +1843,17 @@ function handleClick(event) {
     return;
   }
 
-  if (event.target.closest("[data-confirm-delete-pizza]")) {
-    confirmDeletePizza();
+  if (event.target.closest("[data-confirm-delete]")) {
+    if (store.deleteConfirmExpense) {
+      confirmDeleteDailyExpense();
+    } else {
+      confirmDeletePizza();
+    }
     return;
   }
 
-  if (event.target.closest("[data-cancel-delete-pizza]")) {
-    store.deleteConfirmPizzaId = null;
+  if (event.target.closest("[data-cancel-delete]")) {
+    clearDeleteConfirmation();
     hideToast();
     return;
   }
@@ -1853,6 +2073,22 @@ function handleClick(event) {
     saveAdminPassword();
     return;
   }
+
+  if (event.target.closest("[data-save-attendance-settings]")) {
+    saveAttendanceSettings();
+    return;
+  }
+
+  if (event.target.closest("[data-save-daily-expense]")) {
+    saveDailyExpense();
+    return;
+  }
+
+  const deleteExpenseButton = event.target.closest("[data-delete-daily-expense]");
+  if (deleteExpenseButton) {
+    requestDeleteDailyExpense(deleteExpenseButton.dataset.date, deleteExpenseButton.dataset.deleteDailyExpense);
+    return;
+  }
 }
 
 function focusPizzaForm() {
@@ -1875,8 +2111,14 @@ function requestDeletePizza(id) {
     showToast("Produk tidak ditemukan.", "error");
     return;
   }
+  store.deleteConfirmExpense = null;
   store.deleteConfirmPizzaId = id;
   showConfirmToast(`Hapus ${pizza.name}?`);
+}
+
+function clearDeleteConfirmation() {
+  store.deleteConfirmPizzaId = null;
+  store.deleteConfirmExpense = null;
 }
 
 async function confirmDeletePizza() {
@@ -1932,6 +2174,95 @@ function saveOwnerFee() {
   });
   render();
 }
+
+function saveAttendanceSettings() {
+  const current = getAttendanceSettings();
+  const next = {
+    checkIn: normalizeTimeValue(document.querySelector('[data-attendance-setting="checkIn"]')?.value, current.checkIn),
+    checkOut: normalizeTimeValue(document.querySelector('[data-attendance-setting="checkOut"]')?.value, current.checkOut),
+    toleranceMinutes: normalizeToleranceMinutes(document.querySelector('[data-attendance-setting="toleranceMinutes"]')?.value),
+  };
+  store.attendanceSettings = next;
+  saveLocalAttendanceSettings(next);
+  persistDatabaseWrite(() => dbUpsertAttendanceSettings(next)).then((saved) => {
+    const settingError = store.dbError.includes("attendance_")
+      ? "Jam tersimpan di perangkat ini. Jalankan SQL kolom jam absensi agar sinkron."
+      : "Jam absensi belum tersimpan ke database.";
+    showToast(saved ? "Jam absensi berhasil disimpan" : settingError, saved ? "success" : "error");
+    render();
+  });
+  render();
+}
+
+function saveDailyExpense() {
+  const dates = getViewerDates();
+  if (dates.length !== 1) {
+    showToast("Pilih satu tanggal untuk simpan pengeluaran.", "error");
+    return;
+  }
+  const date = dates[0];
+  const note = store.expenseForm.note.trim();
+  const amount = Number(String(store.expenseForm.amount || "").replace(/\D/g, ""));
+  if (!note || amount <= 0) {
+    showToast("Isi keterangan dan nominal pengeluaran.", "error");
+    return;
+  }
+
+  const expense = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    note,
+    amount,
+    createdAt: new Date().toISOString(),
+  };
+  store.dailyExpenses[date] = [expense, ...(store.dailyExpenses[date] || [])];
+  store.expenseForm = { note: "", amount: "" };
+  saveLocalDailyExpenses();
+  syncDailyExpenseWrite(() => dbUpsertDailyExpense(date, expense));
+  showToast("Pengeluaran harian tersimpan", "success");
+  render();
+}
+
+function requestDeleteDailyExpense(date, id) {
+  const expense = (store.dailyExpenses[date] || []).find((item) => item.id === id);
+  if (!expense) {
+    showToast("Pengeluaran tidak ditemukan.", "error");
+    return;
+  }
+  store.deleteConfirmPizzaId = null;
+  store.deleteConfirmExpense = { date, id };
+  showConfirmToast(`Hapus pengeluaran ${expense.note}?`);
+}
+
+function confirmDeleteDailyExpense() {
+  const target = store.deleteConfirmExpense;
+  store.deleteConfirmExpense = null;
+  hideToast();
+  if (!target) return;
+  deleteDailyExpense(target.date, target.id);
+}
+
+function deleteDailyExpense(date, id) {
+  if (!date || !id || !store.dailyExpenses[date]) return;
+  const current = store.dailyExpenses[date];
+  const next = current.filter((expense) => expense.id !== id);
+  if (next.length === current.length) return;
+  if (next.length) {
+    store.dailyExpenses[date] = next;
+  } else {
+    delete store.dailyExpenses[date];
+  }
+  saveLocalDailyExpenses();
+  syncDailyExpenseWrite(() => dbDeleteDailyExpense(id));
+  showToast("Pengeluaran dihapus", "success");
+  render();
+}
+
+function syncDailyExpenseWrite(action) {
+  action().catch((error) => {
+    console.warn("Daily expense was saved locally only", error);
+  });
+}
+
 function saveAdminPassword() {
   const pin = store.adminPasswordForm.pin.replace(/\D/g, "").slice(0, 4);
   if (pin.length !== 4) {
@@ -1964,6 +2295,33 @@ function handleInput(event) {
   if (event.target.matches("[data-admin-password-pin]")) {
     store.adminPasswordForm.pin = event.target.value.replace(/\D/g, "").slice(0, 4);
     event.target.value = store.adminPasswordForm.pin;
+    return;
+  }
+
+  const attendanceSetting = event.target.dataset.attendanceSetting;
+  if (attendanceSetting) {
+    if (attendanceSetting === "toleranceMinutes") {
+      const value = event.target.value.replace(/\D/g, "").slice(0, 3);
+      store.attendanceSettings.toleranceMinutes = value;
+      event.target.value = value;
+      return;
+    }
+    store.attendanceSettings[attendanceSetting] = normalizeTimeValue(
+      event.target.value,
+      DEFAULT_ATTENDANCE_SETTINGS[attendanceSetting]
+    );
+    return;
+  }
+
+  if (event.target.matches("[data-expense-note]")) {
+    store.expenseForm.note = event.target.value;
+    return;
+  }
+
+  if (event.target.matches("[data-expense-amount]")) {
+    const value = event.target.value.replace(/\D/g, "").slice(0, 10);
+    store.expenseForm.amount = value;
+    event.target.value = value;
     return;
   }
 
@@ -2402,10 +2760,11 @@ function updateGasThumbNodes(src, content, isError = false) {
 function hydrateAttendanceThumbnails() {
   document.querySelectorAll("[data-gas-thumb-src]").forEach((thumb) => {
     const src = thumb.dataset.gasThumbSrc;
-    const cacheKey = photoCacheKey(src, 140);
+    const size = Number(thumb.dataset.gasThumbSize) || 220;
+    const cacheKey = photoCacheKey(src, size);
     if (!src || photoDataCache.has(cacheKey) || photoDataLoading.has(cacheKey)) return;
     photoDataLoading.add(cacheKey);
-    loadGasPhotoData(src, 140)
+    loadGasPhotoData(src, size)
       .then((imageSrc) => {
         photoDataCache.set(cacheKey, imageSrc);
         updateGasThumbNodes(src, imageSrc);
@@ -2574,12 +2933,13 @@ function getSummaryForDates(dates) {
         total.revenue += qty * pizza.price;
         total.cost += qty * pizza.cost;
       });
+      total.expenses += getExpenseTotalForDates([date]);
       total.ownerShare = total.slices * store.ownerFee;
-      total.net = total.revenue - total.cost - total.ownerShare;
+      total.net = total.revenue - total.cost - total.ownerShare - total.expenses;
       total.afterFee = total.revenue - total.ownerShare;
       return total;
     },
-    { slices: 0, revenue: 0, cost: 0, ownerShare: 0, net: 0, afterFee: 0 }
+    { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, net: 0, afterFee: 0 }
   );
 }
 
@@ -2649,8 +3009,8 @@ function getCheckoutHint(date, attendance) {
 }
 
 function filterDescription(dates) {
-  if (dates.length === 1) return `Menampilkan ${formatDate(dates[0])}`;
-  return `Menampilkan ${shortDate(dates[0])} sampai ${shortDate(dates[dates.length - 1])}`;
+  if (dates.length === 1) return formatDate(dates[0]);
+  return `${shortDate(dates[0])} - ${shortDate(dates[dates.length - 1])}`;
 }
 
 function viewerDateDescription(dates) {
@@ -2722,6 +3082,114 @@ function getInitials(name) {
     .toUpperCase();
 }
 
+function loadAttendanceSettings() {
+  try {
+    const saved = localStorage.getItem(ATTENDANCE_SETTINGS_KEY);
+    if (!saved) return;
+    store.attendanceSettings = normalizeAttendanceSettings(JSON.parse(saved));
+  } catch (error) {
+    store.attendanceSettings = { ...DEFAULT_ATTENDANCE_SETTINGS };
+  }
+}
+
+function saveLocalAttendanceSettings(settings) {
+  try {
+    localStorage.setItem(ATTENDANCE_SETTINGS_KEY, JSON.stringify(normalizeAttendanceSettings(settings)));
+  } catch (error) {
+    console.warn("Attendance settings were not saved locally", error);
+  }
+}
+
+function getAttendanceSettings() {
+  return normalizeAttendanceSettings(store.attendanceSettings);
+}
+
+function normalizeAttendanceSettings(settings = {}) {
+  return {
+    checkIn: normalizeTimeValue(settings.checkIn, DEFAULT_ATTENDANCE_SETTINGS.checkIn),
+    checkOut: normalizeTimeValue(settings.checkOut, DEFAULT_ATTENDANCE_SETTINGS.checkOut),
+    toleranceMinutes: normalizeToleranceMinutes(settings.toleranceMinutes),
+  };
+}
+
+function normalizeTimeValue(value, fallback) {
+  const parts = String(value || "")
+    .split(/\D+/)
+    .filter(Boolean)
+    .map(Number);
+  const hour = Math.min(23, Math.max(0, parts[0] || 0));
+  const minute = Math.min(59, Math.max(0, parts[1] || 0));
+  if (!parts.length) return fallback || DEFAULT_ATTENDANCE_SETTINGS.checkIn;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeToleranceMinutes(value) {
+  const minutes = Number(String(value ?? "").replace(/\D/g, ""));
+  if (!Number.isFinite(minutes)) return DEFAULT_ATTENDANCE_SETTINGS.toleranceMinutes;
+  return Math.min(180, Math.max(0, minutes));
+}
+
+function timeToMinutes(value, fallback) {
+  const time = normalizeTimeValue(value, fallback);
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function displayClock(value) {
+  return normalizeTimeValue(value, DEFAULT_ATTENDANCE_SETTINGS.checkIn).replace(":", ".");
+}
+
+function loadDailyExpenses() {
+  try {
+    const saved = localStorage.getItem(DAILY_EXPENSES_KEY);
+    store.dailyExpenses = normalizeDailyExpenses(saved ? JSON.parse(saved) : {});
+  } catch (error) {
+    store.dailyExpenses = {};
+  }
+}
+
+function saveLocalDailyExpenses() {
+  try {
+    localStorage.setItem(DAILY_EXPENSES_KEY, JSON.stringify(normalizeDailyExpenses(store.dailyExpenses)));
+  } catch (error) {
+    console.warn("Daily expenses were not saved locally", error);
+  }
+}
+
+function normalizeDailyExpenses(data = {}) {
+  return Object.entries(data).reduce((expensesByDate, [date, items]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Array.isArray(items)) return expensesByDate;
+    const expenses = items
+      .map((item) => ({
+        id: String(item.id || `${date}-${Math.random().toString(36).slice(2, 8)}`),
+        note: String(item.note || "").trim(),
+        amount: Math.max(0, Number(item.amount) || 0),
+        createdAt: item.createdAt || "",
+      }))
+      .filter((item) => item.note && item.amount > 0);
+    if (expenses.length) expensesByDate[date] = expenses;
+    return expensesByDate;
+  }, {});
+}
+
+function getExpensesForDates(dates) {
+  return dates
+    .flatMap((date) =>
+      (store.dailyExpenses[date] || []).map((expense) => ({
+        ...expense,
+        date,
+      }))
+    )
+    .sort((a, b) => {
+      if (a.date !== b.date) return b.date.localeCompare(a.date);
+      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+    });
+}
+
+function getExpenseTotalForDates(dates) {
+  return getExpensesForDates(dates).reduce((sum, expense) => sum + expense.amount, 0);
+}
+
 function getAttendanceFeedback(type, date) {
   const minutes = date.getHours() * 60 + date.getMinutes();
   return getAttendanceFeedbackByMinutes(type, minutes);
@@ -2738,39 +3206,43 @@ function getAttendanceFeedbackFromTime(type, time) {
 
 function getAttendanceFeedbackByMinutes(type, minutes) {
   const time = minutesToTime(minutes);
+  const settings = getAttendanceSettings();
+  const checkInMinutes = timeToMinutes(settings.checkIn, DEFAULT_ATTENDANCE_SETTINGS.checkIn);
+  const checkOutMinutes = timeToMinutes(settings.checkOut, DEFAULT_ATTENDANCE_SETTINGS.checkOut);
+  const tolerance = settings.toleranceMinutes;
   if (type === "in") {
-    if (minutes < 15 * 60) {
+    if (minutes < checkInMinutes - 60) {
       return {
         status: "early",
         badge: "Di luar jam",
-        message: `Absen masuk ${time}, terlalu awal dari jadwal 16.00.`,
+        message: `Absen masuk ${time}, terlalu awal dari jadwal ${displayClock(settings.checkIn)}.`,
       };
     }
 
-    if (minutes <= 16 * 60) {
+    if (minutes <= checkInMinutes + tolerance) {
       return {
         status: "ontime",
         badge: "Tepat waktu",
-        message: `Absen masuk ${time}, tepat waktu untuk jadwal 16.00. Terima kasih.`,
+        message: `Absen masuk ${time}, tepat waktu untuk jadwal ${displayClock(settings.checkIn)}. Terima kasih.`,
       };
     }
 
     return {
       status: "late",
       badge: "Terlambat",
-      message: `Absen masuk ${time}, terlambat ${minutes - 16 * 60} menit dari jadwal 16.00.`,
+      message: `Absen masuk ${time}, terlambat ${minutes - checkInMinutes - tolerance} menit dari toleransi jadwal ${displayClock(settings.checkIn)}.`,
     };
   }
 
-  if (minutes < 23 * 60) {
+  if (minutes < checkOutMinutes - tolerance) {
     return {
       status: "early",
       badge: "Belum waktunya",
-      message: `Absen pulang ${time}, sebelum jadwal pulang 23.00.`,
+      message: `Absen pulang ${time}, sebelum jadwal pulang ${displayClock(settings.checkOut)}.`,
     };
   }
 
-  if (minutes === 23 * 60) {
+  if (minutes <= checkOutMinutes + tolerance) {
     return {
       status: "ontime",
       badge: "Tepat waktu",
@@ -2781,7 +3253,7 @@ function getAttendanceFeedbackByMinutes(type, minutes) {
   return {
     status: "late",
     badge: "Lewat jadwal",
-    message: `Absen pulang ${time}, lewat ${minutes - 23 * 60} menit dari jadwal 23.00.`,
+    message: `Absen pulang ${time}, lewat ${minutes - checkOutMinutes - tolerance} menit dari toleransi jadwal ${displayClock(settings.checkOut)}.`,
   };
 }
 
@@ -2802,7 +3274,7 @@ function rupiah(value) {
 }
 
 function escapeHtml(value) {
-  return value
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -2821,8 +3293,8 @@ function showConfirmToast(message) {
   toast.innerHTML = `
     <span>${escapeHtml(message)}</span>
     <div class="toast-actions">
-      <button type="button" data-cancel-delete-pizza>Tidak</button>
-      <button type="button" data-confirm-delete-pizza>Ya</button>
+      <button type="button" data-cancel-delete>Tidak</button>
+      <button type="button" data-confirm-delete>Ya</button>
     </div>
   `;
   toast.className = "toast confirm show";

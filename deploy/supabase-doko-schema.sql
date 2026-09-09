@@ -31,6 +31,16 @@ create table if not exists public.doko_daily_records (
   primary key (app_id, record_date)
 );
 
+create table if not exists public.doko_daily_expenses (
+  app_id text not null,
+  id text not null,
+  record_date date not null,
+  note text not null,
+  amount integer not null check (amount >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (app_id, id)
+);
 create table if not exists public.doko_attendance (
   app_id text not null,
   record_date date not null,
@@ -47,14 +57,20 @@ create index if not exists doko_pizzas_app_sort_idx
 create index if not exists doko_daily_records_app_date_idx
   on public.doko_daily_records (app_id, record_date desc);
 
+create index if not exists doko_daily_expenses_app_date_idx
+  on public.doko_daily_expenses (app_id, record_date desc, created_at desc);
 create index if not exists doko_attendance_app_date_idx
   on public.doko_attendance (app_id, record_date desc);
 
 alter table public.doko_settings add column if not exists admin_pin text not null default '0000';
+alter table public.doko_settings add column if not exists attendance_check_in text not null default '16:00';
+alter table public.doko_settings add column if not exists attendance_check_out text not null default '23:00';
+alter table public.doko_settings add column if not exists attendance_tolerance_minutes integer not null default 0;
 
 alter table public.doko_settings enable row level security;
 alter table public.doko_pizzas enable row level security;
 alter table public.doko_daily_records enable row level security;
+alter table public.doko_daily_expenses enable row level security;
 alter table public.doko_attendance enable row level security;
 
 drop policy if exists "DOKO settings read" on public.doko_settings;
@@ -123,6 +139,32 @@ create policy "DOKO records update"
   using (app_id = 'pizzain_doko_v1')
   with check (app_id = 'pizzain_doko_v1');
 
+
+drop policy if exists "DOKO expenses read" on public.doko_daily_expenses;
+drop policy if exists "DOKO expenses insert" on public.doko_daily_expenses;
+drop policy if exists "DOKO expenses update" on public.doko_daily_expenses;
+drop policy if exists "DOKO expenses delete" on public.doko_daily_expenses;
+
+create policy "DOKO expenses read"
+  on public.doko_daily_expenses for select
+  to anon
+  using (app_id = 'pizzain_doko_v1');
+
+create policy "DOKO expenses insert"
+  on public.doko_daily_expenses for insert
+  to anon
+  with check (app_id = 'pizzain_doko_v1');
+
+create policy "DOKO expenses update"
+  on public.doko_daily_expenses for update
+  to anon
+  using (app_id = 'pizzain_doko_v1')
+  with check (app_id = 'pizzain_doko_v1');
+
+create policy "DOKO expenses delete"
+  on public.doko_daily_expenses for delete
+  to anon
+  using (app_id = 'pizzain_doko_v1');
 drop policy if exists "DOKO attendance read" on public.doko_attendance;
 drop policy if exists "DOKO attendance insert" on public.doko_attendance;
 drop policy if exists "DOKO attendance update" on public.doko_attendance;
