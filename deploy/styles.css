@@ -18,8 +18,10 @@
   --shadow: 0 18px 45px rgba(95, 25, 25, 0.08);
   --radius: 8px;
   --visible-vh: 100dvh;
-  --topbar-height: 62px;
-  --statusbar-space: max(env(safe-area-inset-top, 0px), 34px);
+  --topbar-height: 50px;
+  --statusbar-space: max(env(safe-area-inset-top, 0px), 46px);
+  --admin-tabs-height: 76px;
+  --admin-tabs-gap: 8px;
 }
 
 * {
@@ -99,7 +101,7 @@ a {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 20;
+  z-index: 30;
 }
 
 .brand {
@@ -207,7 +209,7 @@ a {
 }
 
 .admin-main {
-  padding-top: 8px;
+  padding-top: calc(var(--admin-tabs-height) + var(--admin-tabs-gap) + 8px);
   padding-bottom: 28px;
 }
 
@@ -336,7 +338,7 @@ a {
   margin-bottom: 14px;
   padding: 4px;
   position: sticky;
-  top: 76px;
+  top: calc(var(--topbar-height) + var(--statusbar-space) + 8px);
   z-index: 12;
 }
 
@@ -569,7 +571,14 @@ a {
 
 .admin-tabs {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 12px;
+  left: 50%;
+  margin-bottom: 0;
+  max-width: 748px;
+  position: fixed;
+  top: calc(var(--topbar-height) + var(--statusbar-space) + var(--admin-tabs-gap));
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  z-index: 24;
 }
 
 .admin-tabs button {
