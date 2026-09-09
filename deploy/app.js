@@ -13,7 +13,6 @@ const DEFAULT_ADMIN_PIN = "0000";
 const SUPABASE_URL = "https://qipqhopjbwjquschrggt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpcHFob3BqYndqcXVzY2hyZ2d0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NjQ1MDYsImV4cCI6MjA5NzQ0MDUwNn0._LAfxDUc7JDb8SfGjL-XwoeC2ECbrJvDoEKx4_iTuH0";
 const DOKO_APP_ID = "pizzain_doko_v1";
-const APP_ROUTES = new Set(["admin", "input", "view"]);
 const GAS_PHOTO_UPLOAD_URL = "https://script.google.com/macros/s/AKfycbyiQGAfG_AJSwMAaGTwsl1G5CiYmgKgBXyOuji9nsG4VOJ5hegolFL_bdroypwc8cT1AQ/exec";
 
 const store = {
@@ -57,6 +56,12 @@ const store = {
   dailyEditUnlocked: {
     sales: false,
     stock: false,
+  },
+  adminEdit: {
+    type: null,
+    date: null,
+    values: {},
+    saving: false,
   },
   dailySubmitted: {},
   timers: [
@@ -133,15 +138,28 @@ const photoDataCache = new Map();
 const photoDataLoading = new Set();
 
 window.addEventListener("popstate", render);
+window.addEventListener("resize", updateVisibleViewport);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", updateVisibleViewport);
+  window.visualViewport.addEventListener("scroll", updateVisibleViewport);
+}
 document.addEventListener("pointerdown", unlockTimerAudio, { once: true });
 document.addEventListener("click", handleClick);
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
 document.addEventListener("keydown", handleKeydown);
+document.addEventListener("focusin", handleFocusIn);
 setInterval(updateTimers, 1000);
 
+updateVisibleViewport();
 render();
 initializeDatabase();
+
+function updateVisibleViewport() {
+  const viewport = window.visualViewport;
+  const height = viewport ? viewport.height : window.innerHeight;
+  document.documentElement.style.setProperty("--visible-vh", `${Math.round(height)}px`);
+}
 
 async function initializeDatabase() {
   store.dbLoading = true;
@@ -453,7 +471,7 @@ function shell(role, content) {
     <div class="shell">
       <header class="topbar">
         <a class="brand" href="${roleHref(role)}" data-link aria-label="Pizzain DOKO ${role}">
-          <span class="brand-mark"><img src="${assetPath("assets/logo-pizzain-apk.jpg")}" alt="Logo Pizzain DOKO" /></span>
+          <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain DOKO" /></span>
           <span>
             <h1>Pizzain DOKO</h1>
             <p>${roleLabel}</p>
@@ -465,20 +483,9 @@ function shell(role, content) {
   `;
 }
 
-function appBasePath() {
-  const parts = window.location.pathname.split("/").filter(Boolean);
-  const last = parts[parts.length - 1];
-  if (APP_ROUTES.has(last)) parts.pop();
-  return `/${parts.join("/")}${parts.length ? "/" : ""}`;
-}
-
-function assetPath(path) {
-  return `${appBasePath()}${path}`;
-}
-
 function roleHref(role) {
-  const route = role === "viewer" ? "admin" : role;
-  return APP_ROUTES.has(route) ? `${appBasePath()}${route}/` : appBasePath();
+  if (role === "viewer") return "/view";
+  return `/${role}`;
 }
 
 function renderAdminPin() {
@@ -487,7 +494,7 @@ function renderAdminPin() {
   return `
     <main class="main narrow admin-pin-screen">
       <section class="panel admin-pin-card">
-        <span class="brand-mark"><img src="${assetPath("assets/logo-pizzain-apk.jpg")}" alt="Logo Pizzain DOKO" /></span>
+        <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain DOKO" /></span>
         <p class="pin-help">Masukkan Pin Admin</p>
         <div class="pin-entry" data-pin-focus>
           <span class="pin-label">PIN Admin</span>
@@ -542,6 +549,7 @@ function renderAdminContent(summary) {
 function renderAdminDashboard(summary) {
   const selectedDates = getViewerDates();
   const showStock = selectedDates.length === 1;
+  const selectedDate = showStock ? selectedDates[0] : "";
   return `
     <section class="panel stack viewer-filter-panel admin-filter-panel">
       <div class="segmented" role="tablist" aria-label="Filter tanggal dashboard admin">
@@ -590,7 +598,7 @@ function renderAdminDashboard(summary) {
     <section class="panel admin-list-panel">
       <div class="admin-list-head">
         <h3>Ringkasan Penjualan</h3>
-        <span>${summary.slices} slice</span>
+        ${renderAdminListActions("sales", selectedDate, `${summary.slices} slice`)}
       </div>
       ${renderAdminVariantList(selectedDates, "sales")}
     </section>
@@ -599,16 +607,44 @@ function renderAdminDashboard(summary) {
         ? `<section class="panel admin-list-panel">
             <div class="admin-list-head secondary">
               <h3>Ringkasan Stok Pizza</h3>
-              <span>${getStockTotalForDate(selectedDates[0])} Slice</span>
+              ${renderAdminListActions("stock", selectedDate, `${getStockTotalForDate(selectedDate)} Slice`)}
             </div>
             ${renderAdminVariantList(selectedDates, "stock")}
+          </section>
+          <section class="panel admin-list-panel admin-stock-check">
+            ${renderStockConsistencyCheck(selectedDate)}
           </section>`
         : ""
     }
   `;
 }
 
+function renderAdminListActions(type, date, totalLabel) {
+  if (!date) return `<span>${totalLabel}</span>`;
+  const editing = isAdminRecordEditing(type, date);
+  const saving = editing && store.adminEdit.saving;
+
+  if (!editing) {
+    return `
+      <div class="admin-list-actions">
+        <span>${totalLabel}</span>
+        <button class="admin-list-action-btn" type="button" data-admin-record-edit="${type}" data-date="${date}">Edit</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="admin-list-actions">
+      <span>${saving ? "Menyimpan..." : totalLabel}</span>
+      <button class="admin-list-action-btn light" type="button" data-admin-record-cancel="${type}" data-date="${date}" ${saving ? "disabled" : ""}>Batal</button>
+      <button class="admin-list-action-btn" type="button" data-admin-record-save="${type}" data-date="${date}" ${saving ? "disabled" : ""}>Simpan</button>
+    </div>
+  `;
+}
+
 function renderAdminVariantList(dates, type) {
+  const editDate = dates.length === 1 ? dates[0] : "";
+  const editing = editDate && isAdminRecordEditing(type, editDate);
   const rows = store.pizzas
     .filter((pizza) => pizza.active)
     .map((pizza) => {
@@ -618,7 +654,8 @@ function renderAdminVariantList(dates, type) {
         sold += store.records[date]?.sales?.[pizza.id] || 0;
         stock += store.records[date]?.stock?.[pizza.id] || 0;
       });
-      return { pizza, sold, stock };
+      const draftValue = editing ? Number(store.adminEdit.values[pizza.id]) || 0 : null;
+      return { pizza, sold, stock, draftValue };
     });
 
   const isStock = type === "stock";
@@ -626,16 +663,27 @@ function renderAdminVariantList(dates, type) {
     <div class="admin-compact-list">
       ${rows
         .map(
-          ({ pizza, sold, stock }) => `
+          ({ pizza, sold, stock, draftValue }) => {
+            const value = editing ? draftValue : isStock ? stock : sold;
+            return `
             <article class="admin-compact-row">
               <div>
                 <h4>${pizza.name}</h4>
               </div>
               <div class="admin-compact-values">
-                <span><strong>${isStock ? stock : sold}</strong> PCS</span>
+                ${
+                  editing
+                    ? `<div class="admin-edit-stepper" aria-label="Edit ${pizza.name}">
+                        <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${pizza.id}" data-delta="-1">-</button>
+                        <strong>${value}</strong>
+                        <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${pizza.id}" data-delta="1">+</button>
+                      </div>`
+                    : `<span><strong>${value}</strong> SLICE</span>`
+                }
               </div>
             </article>
-          `
+          `;
+          }
         )
         .join("")}
     </div>
@@ -645,6 +693,140 @@ function renderAdminVariantList(dates, type) {
 function getStockTotalForDate(date) {
   const stock = store.records[date]?.stock || {};
   return store.pizzas.filter((pizza) => pizza.active).reduce((total, pizza) => total + (stock[pizza.id] || 0), 0);
+}
+
+function getStockConsistencyRows(date) {
+  const previousDate = getPreviousDate(date);
+  const currentRecord = store.records[date] || { sales: {}, stock: {} };
+  const previousRecord = store.records[previousDate] || { sales: {}, stock: {} };
+
+  return store.pizzas
+    .filter((pizza) => pizza.active)
+    .map((pizza) => {
+      const previousStock = Number(previousRecord.stock?.[pizza.id]) || 0;
+      const soldToday = Number(currentRecord.sales?.[pizza.id]) || 0;
+      const currentStock = Number(currentRecord.stock?.[pizza.id]) || 0;
+      const expectedStockUsage = soldToday + currentStock;
+
+      return {
+        pizza,
+        previousStock,
+        soldToday,
+        currentStock,
+        diff: previousStock - expectedStockUsage,
+      };
+    });
+}
+
+function renderStockConsistencyCheck(date) {
+  const rows = getStockConsistencyRows(date);
+  const issueCount = rows.filter((row) => row.diff !== 0).length;
+  const previousDate = getPreviousDate(date);
+
+  return `
+    <div class="admin-list-head check">
+      <div>
+        <h3>Cek Kesesuaian Stok</h3>
+        <p>${shortDate(previousDate)} ke ${shortDate(date)}</p>
+      </div>
+      <span class="${issueCount ? "warning" : "ok"}">${issueCount ? `${issueCount} Selisih` : "Sesuai"}</span>
+    </div>
+    <div class="stock-check-list">
+      ${rows
+        .map(
+          (row) => `
+            <article class="stock-check-row ${row.diff === 0 ? "ok" : "warning"}">
+              <div>
+                <h4>${row.pizza.name}</h4>
+                <p>Kemarin ${row.previousStock} - (${row.soldToday} laku + ${row.currentStock} sisa)</p>
+              </div>
+              <strong>${row.diff === 0 ? "Pas" : `${row.diff > 0 ? "+" : ""}${row.diff}`}</strong>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function isAdminRecordEditing(type, date) {
+  return store.adminEdit.type === type && store.adminEdit.date === date;
+}
+
+function beginAdminRecordEdit(type, date) {
+  const record = store.records[date] || { sales: {}, stock: {} };
+  const source = record[type] || {};
+  store.adminEdit = {
+    type,
+    date,
+    values: store.pizzas
+      .filter((pizza) => pizza.active)
+      .reduce((values, pizza) => {
+        values[pizza.id] = Number(source[pizza.id]) || 0;
+        return values;
+      }, {}),
+    saving: false,
+  };
+}
+
+function cancelAdminRecordEdit() {
+  store.adminEdit = {
+    type: null,
+    date: null,
+    values: {},
+    saving: false,
+  };
+}
+
+function adjustAdminRecordValue(type, date, id, delta) {
+  if (!isAdminRecordEditing(type, date)) {
+    beginAdminRecordEdit(type, date);
+  }
+  store.adminEdit.values[id] = Math.max(0, (Number(store.adminEdit.values[id]) || 0) + delta);
+  render();
+}
+
+function getAdminRecordDraftValues() {
+  return store.pizzas
+    .filter((pizza) => pizza.active)
+    .reduce((values, pizza) => {
+      values[pizza.id] = Math.max(0, Number(store.adminEdit.values[pizza.id]) || 0);
+      return values;
+    }, {});
+}
+
+async function saveAdminRecordEdit(type, date) {
+  if (!isAdminRecordEditing(type, date) || store.adminEdit.saving) return;
+
+  const previousRecord = store.records[date]
+    ? { sales: { ...store.records[date].sales }, stock: { ...store.records[date].stock } }
+    : null;
+  const previousProgress = getDailyProgress(date);
+  const record = store.records[date] || { sales: {}, stock: {} };
+
+  store.adminEdit.saving = true;
+  record[type] = getAdminRecordDraftValues();
+  store.records[date] = record;
+  store.dailySubmitted[date] = { ...previousProgress, [type]: true };
+  render();
+
+  const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(date));
+
+  if (!saved) {
+    if (previousRecord) {
+      store.records[date] = previousRecord;
+    } else {
+      delete store.records[date];
+    }
+    store.dailySubmitted[date] = previousProgress;
+    cancelAdminRecordEdit();
+    render();
+    return;
+  }
+
+  cancelAdminRecordEdit();
+  showToast(`${type === "stock" ? "Stok" : "Penjualan"} berhasil diperbarui.`, "success");
+  render();
 }
 
 function renderManagePizza() {
@@ -1181,15 +1363,16 @@ function renderAdminReport() {
         ${viewerFilterButton("custom", "Custom")}
       </div>
       ${isCustom ? renderCalendarRange() : ""}
-      <div class="loading-line">${store.viewerLoading ? `<span class="loading-dot"></span>Memuat laporan...` : `<span></span>${viewerDateDescription(selectedDates)}`}</div>
     </section>
     <section class="admin-report-ticket" aria-label="Laporan untuk pemilik usaha">
-      <div class="ticket-topline"></div>
       <div class="ticket-head">
-        <div>
-          <span>Laporan Tenant</span>
-          <h3>Pizzain DOKO</h3>
-          <p>${viewerDateDescription(selectedDates)}</p>
+        <div class="ticket-head-copy">
+          <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain DOKO" /></span>
+          <div>
+            <span>Laporan Tenant</span>
+            <h3>Pizzain DOKO</h3>
+            <p>${ticketDateDescription(selectedDates)}</p>
+          </div>
         </div>
         <strong>${summary.slices}<small>slice</small></strong>
       </div>
@@ -1234,7 +1417,6 @@ function viewerFilterButton(filter, label) {
 }
 
 function renderViewerTotals(summary, rangeMode, options = {}) {
-  const salesFormula = rupiah(summary.revenue);
   const feeFormula = `${summary.slices} slice x ${rupiah(store.ownerFee)} =`;
   const pizzainFormula = `${rupiah(summary.revenue)} - ${rupiah(summary.ownerShare)} =`;
 
@@ -1245,10 +1427,9 @@ function renderViewerTotals(summary, rangeMode, options = {}) {
       </div>
       <div class="viewer-summary-row">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Penjualan</span>
-          <em class="viewer-summary-formula">${salesFormula}</em>
+          <span class="viewer-summary-title">Penjualan Pizza</span>
         </div>
-        <strong class="viewer-summary-value">${summary.slices} slice</strong>
+        <strong class="viewer-summary-value">${rupiah(summary.revenue)}</strong>
       </div>
       <div class="viewer-summary-row">
         <div class="viewer-summary-copy">
@@ -1259,7 +1440,7 @@ function renderViewerTotals(summary, rangeMode, options = {}) {
       </div>
       <div class="viewer-summary-row highlight">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Omzet Pizzain</span>
+          <span class="viewer-summary-title">Omset Pizza</span>
           <em class="viewer-summary-formula">${pizzainFormula}</em>
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.afterFee)}</strong>
@@ -1465,6 +1646,37 @@ function handleClick(event) {
 
   if (event.target.closest("[data-pin-focus]")) {
     document.querySelector("[data-admin-pin]")?.focus();
+    return;
+  }
+
+  const adminRecordEdit = event.target.closest("[data-admin-record-edit]");
+  if (adminRecordEdit) {
+    beginAdminRecordEdit(adminRecordEdit.dataset.adminRecordEdit, adminRecordEdit.dataset.date);
+    render();
+    return;
+  }
+
+  const adminRecordCancel = event.target.closest("[data-admin-record-cancel]");
+  if (adminRecordCancel) {
+    cancelAdminRecordEdit();
+    render();
+    return;
+  }
+
+  const adminRecordSave = event.target.closest("[data-admin-record-save]");
+  if (adminRecordSave) {
+    saveAdminRecordEdit(adminRecordSave.dataset.adminRecordSave, adminRecordSave.dataset.date);
+    return;
+  }
+
+  const adminRecordDelta = event.target.closest("[data-admin-record-delta]");
+  if (adminRecordDelta) {
+    adjustAdminRecordValue(
+      adminRecordDelta.dataset.adminRecordDelta,
+      adminRecordDelta.dataset.date,
+      adminRecordDelta.dataset.id,
+      Number(adminRecordDelta.dataset.delta)
+    );
     return;
   }
 
@@ -1752,6 +1964,17 @@ function handleKeydown(event) {
     event.preventDefault();
     saveAdminPassword();
   }
+}
+
+function handleFocusIn(event) {
+  if (!event.target.matches("[data-admin-pin], [data-admin-password-pin]")) return;
+  updateVisibleViewport();
+  setTimeout(() => {
+    event.target.closest(".admin-pin-card, .admin-password-panel")?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  }, 180);
 }
 
 function updateAdminPinDots() {
@@ -2388,18 +2611,28 @@ function viewerDateDescription(dates) {
   return filterDescription(dates);
 }
 
+function ticketDateDescription(dates) {
+  if (dates.length === 1) return formatDate(dates[0]);
+  return `${shortDate(dates[0])} - ${shortDate(dates[dates.length - 1])}`;
+}
+
 function normalizeRoute(path) {
-  const route = path.replace(/\/+$/, "").split("/").filter(Boolean).pop();
-  if (route === "admin") return "/admin";
-  if (route === "input") return "/input";
-  if (route === "view") return "/view";
-  return "/";
+  const route = path.replace(/\/+$/, "") || "/";
+  if (route === "/") return "/";
+  if (route === "/admin") return "/admin";
+  if (route === "/input") return "/input";
+  if (route === "/view") return "/view";
+  return route;
 }
 
 function addDays(date, days) {
   const copy = new Date(date);
   copy.setDate(copy.getDate() + days);
   return copy;
+}
+
+function getPreviousDate(date) {
+  return isoDate(addDays(new Date(`${date}T00:00:00`), -1));
 }
 
 function isoDate(date) {
