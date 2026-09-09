@@ -19,6 +19,7 @@
   --radius: 8px;
   --visible-vh: 100dvh;
   --topbar-height: 68px;
+  --statusbar-space: max(env(safe-area-inset-top, 0px), 14px);
 }
 
 * {
@@ -77,7 +78,11 @@ a {
 
 .shell {
   min-height: var(--visible-vh);
-  padding-top: calc(var(--topbar-height) + env(safe-area-inset-top, 0px));
+  padding-top: calc(var(--topbar-height) + var(--statusbar-space));
+}
+
+.pin-shell {
+  padding-top: 0;
 }
 
 .topbar {
@@ -87,11 +92,11 @@ a {
   border-bottom: 1px solid rgba(234, 216, 213, 0.72);
   display: flex;
   gap: 14px;
-  height: var(--topbar-height);
+  height: calc(var(--topbar-height) + var(--statusbar-space));
   justify-content: space-between;
-  padding: 0 18px;
+  padding: var(--statusbar-space) 18px 0;
   position: fixed;
-  top: env(safe-area-inset-top, 0px);
+  top: 0;
   left: 0;
   right: 0;
   z-index: 20;
@@ -168,7 +173,7 @@ a {
 .main {
   margin: 0 auto;
   max-width: 1120px;
-  padding: 18px 16px 104px;
+  padding: 12px 16px 104px;
 }
 
 .main.narrow {
@@ -202,7 +207,7 @@ a {
 }
 
 .admin-main {
-  padding-top: 14px;
+  padding-top: 8px;
   padding-bottom: 28px;
 }
 
@@ -2160,15 +2165,15 @@ a {
   align-items: center;
   align-content: center;
   display: grid;
-  min-height: calc(var(--visible-vh) - var(--topbar-height) - env(safe-area-inset-top, 0px));
+  min-height: var(--visible-vh);
   padding: clamp(12px, 4vh, 30px) 16px max(18px, env(safe-area-inset-bottom, 0px));
-  scroll-margin-top: calc(var(--topbar-height) + 12px);
+  scroll-margin-top: 12px;
   transition: min-height 0.18s ease, padding 0.18s ease;
 }
 
 body.pin-keyboard-active .admin-pin-screen {
   align-content: center;
-  min-height: calc(var(--visible-vh) - var(--topbar-height) - env(safe-area-inset-top, 0px));
+  min-height: var(--visible-vh);
   padding-top: 8px;
   padding-bottom: max(38vh, 180px, env(safe-area-inset-bottom, 0px));
 }

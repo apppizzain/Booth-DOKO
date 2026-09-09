@@ -441,12 +441,12 @@ function render() {
   const route = normalizeRoute(location.pathname);
 
   if (route === "/admin") {
-    app.innerHTML = shell("admin", store.adminUnlocked ? renderAdmin() : renderAdminPin());
+    app.innerHTML = store.adminUnlocked ? shell("admin", renderAdmin()) : pinShell(renderAdminPin());
   } else if (route === "/input") {
     app.innerHTML = shell("input", renderInput());
   } else if (route === "/view") {
     store.adminView = "reports";
-    app.innerHTML = shell("admin", store.adminUnlocked ? renderAdmin() : renderAdminPin());
+    app.innerHTML = store.adminUnlocked ? shell("admin", renderAdmin()) : pinShell(renderAdminPin());
   } else {
     app.innerHTML = "";
   }
@@ -481,6 +481,14 @@ function shell(role, content) {
           </span>
         </a>
       </header>
+      ${content}
+    </div>
+  `;
+}
+
+function pinShell(content) {
+  return `
+    <div class="shell pin-shell">
       ${content}
     </div>
   `;
@@ -1996,7 +2004,7 @@ function centerFocusedAdminPanel(target) {
   const viewport = window.visualViewport;
   const viewportHeight = viewport ? viewport.height : window.innerHeight;
   const viewportTop = viewport ? viewport.offsetTop : 0;
-  const topbarHeight = document.querySelector(".topbar")?.getBoundingClientRect().height || 68;
+  const topbarHeight = document.querySelector(".topbar")?.getBoundingClientRect().height || 0;
   const rect = panel.getBoundingClientRect();
   const safeVisibleHeight = Math.max(220, viewportHeight - topbarHeight);
   const targetCenter = viewportTop + topbarHeight + safeVisibleHeight / 2;
