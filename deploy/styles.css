@@ -558,7 +558,7 @@ a {
 }
 
 .admin-tabs {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-bottom: 12px;
 }
 
@@ -1594,6 +1594,178 @@ a {
   font-family: Manrope, system-ui, sans-serif;
   font-size: 17px;
   line-height: 1;
+}
+
+
+.admin-report-filter {
+  margin-bottom: 0;
+}
+
+.admin-report-ticket {
+  background: #fffdfc;
+  border: 1px solid rgba(201, 21, 47, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(76, 30, 30, 0.1);
+  overflow: hidden;
+  padding: 12px;
+  position: relative;
+}
+
+.ticket-topline {
+  background: linear-gradient(135deg, #b00822 0%, #d41432 48%, #f05a4f 100%);
+  border-radius: 999px;
+  height: 8px;
+  margin-bottom: 12px;
+}
+
+.ticket-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.ticket-head > div {
+  min-width: 0;
+}
+
+.ticket-head span,
+.ticket-section-title {
+  color: var(--muted);
+  display: block;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.ticket-head h3 {
+  color: var(--ink);
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 24px;
+  line-height: 1.05;
+  margin: 2px 0 4px;
+}
+
+.ticket-head p {
+  color: #7a5f5a;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  margin: 0;
+}
+
+.ticket-head strong {
+  align-items: center;
+  background: var(--red);
+  border-radius: 14px;
+  color: #fff;
+  display: inline-flex;
+  flex-direction: column;
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 28px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 62px;
+  min-width: 76px;
+  padding: 8px 10px;
+}
+
+.ticket-head small {
+  font-size: 10px;
+  font-weight: 900;
+  margin-top: 5px;
+  text-transform: uppercase;
+}
+
+.ticket-divider {
+  border-top: 1px dashed rgba(108, 83, 78, 0.28);
+  margin: 13px 0;
+}
+
+.ticket-section-title {
+  margin-bottom: 8px;
+}
+
+.ticket-report-list {
+  gap: 0;
+}
+
+.admin-report-ticket .viewer-report-row {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed rgba(108, 83, 78, 0.18);
+  border-radius: 0;
+  min-height: 44px;
+  padding: 8px 0;
+}
+
+.admin-report-ticket .viewer-report-row:last-child {
+  border-bottom: 0;
+}
+
+.admin-report-ticket .viewer-report-name h4 {
+  font-size: 14px;
+}
+
+.admin-report-ticket .viewer-report-name p {
+  color: #7a5f5a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-report-ticket .viewer-sold-value {
+  background: #fff0f2;
+  color: var(--red-deep);
+}
+
+.report-ticket-summary {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 0;
+}
+
+.report-ticket-summary .viewer-card-head {
+  display: none;
+}
+
+.report-ticket-summary .viewer-summary-row {
+  border-bottom: 1px dashed rgba(108, 83, 78, 0.2);
+  min-height: 44px;
+  padding: 8px 0;
+}
+
+.report-ticket-summary .viewer-summary-row .viewer-summary-title {
+  background: #fff0f2;
+}
+
+.report-ticket-summary .viewer-summary-formula {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.report-ticket-summary .viewer-summary-value {
+  font-size: 20px;
+}
+
+.report-ticket-summary .viewer-summary-row.highlight {
+  background: linear-gradient(135deg, #b00822 0%, #d41432 52%, #ef554c 100%);
+  border: 0;
+  border-radius: 12px;
+  margin: 9px 0 0;
+  padding: 12px;
+}
+
+.report-ticket-summary .viewer-summary-row.highlight .viewer-summary-title {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.report-ticket-summary .viewer-summary-row.highlight .viewer-summary-formula,
+.report-ticket-summary .viewer-summary-row.highlight .viewer-summary-value {
+  color: #fff;
 }
 
 .photo-thumb {

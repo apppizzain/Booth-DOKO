@@ -424,7 +424,8 @@ function render() {
   } else if (route === "/input") {
     app.innerHTML = shell("input", renderInput());
   } else if (route === "/view") {
-    app.innerHTML = shell("viewer", renderViewer());
+    store.adminView = "reports";
+    app.innerHTML = shell("admin", store.adminUnlocked ? renderAdmin() : renderAdminPin());
   } else {
     app.innerHTML = "";
   }
@@ -476,7 +477,7 @@ function assetPath(path) {
 }
 
 function roleHref(role) {
-  const route = role === "viewer" ? "view" : role;
+  const route = role === "viewer" ? "admin" : role;
   return APP_ROUTES.has(route) ? `${appBasePath()}${route}/` : appBasePath();
 }
 
@@ -503,9 +504,6 @@ function renderAdminPin() {
 }
 
 function renderAdmin() {
-  if (store.adminView === "reports") {
-    store.adminView = "dashboard";
-  }
   if (store.adminView === "pizza" || store.adminView === "fee") {
     store.adminView = "settings";
   }
@@ -514,6 +512,7 @@ function renderAdmin() {
     <main class="main narrow admin-main">
       <nav class="input-tabs admin-tabs" aria-label="Menu admin">
         ${adminMenuButton("dashboard", "space_dashboard", "Dashboard")}
+        ${adminMenuButton("reports", "receipt_long", "Laporan")}
         ${adminMenuButton("attendance", "photo_camera", "Absensi")}
         ${adminMenuButton("settings", "settings", "Setting")}
       </nav>
@@ -536,6 +535,7 @@ function adminMenuButton(view, icon, label) {
 function renderAdminContent(summary) {
   if (store.adminView === "settings") return renderManagePizza();
   if (store.adminView === "attendance") return renderAttendanceHistory();
+  if (store.adminView === "reports") return renderAdminReport();
   return renderAdminDashboard(summary);
 }
 
@@ -1168,6 +1168,39 @@ function renderSubmitBar(canSubmitDaily) {
   `;
 }
 
+function renderAdminReport() {
+  const selectedDates = getViewerDates();
+  const summary = getSummaryForDates(selectedDates);
+  const isCustom = store.viewerFilter === "custom";
+
+  return `
+    <section class="panel stack viewer-filter-panel admin-report-filter">
+      <div class="segmented" role="tablist" aria-label="Filter tanggal laporan">
+        ${viewerFilterButton("today", "Hari Ini")}
+        ${viewerFilterButton("yesterday", "Kemarin")}
+        ${viewerFilterButton("custom", "Custom")}
+      </div>
+      ${isCustom ? renderCalendarRange() : ""}
+      <div class="loading-line">${store.viewerLoading ? `<span class="loading-dot"></span>Memuat laporan...` : `<span></span>${viewerDateDescription(selectedDates)}`}</div>
+    </section>
+    <section class="admin-report-ticket" aria-label="Laporan untuk pemilik usaha">
+      <div class="ticket-topline"></div>
+      <div class="ticket-head">
+        <div>
+          <span>Laporan Tenant</span>
+          <h3>Pizzain DOKO</h3>
+          <p>${viewerDateDescription(selectedDates)}</p>
+        </div>
+        <strong>${summary.slices}<small>slice</small></strong>
+      </div>
+      <div class="ticket-divider"></div>
+      <div class="ticket-section-title">Detail Pizza Terjual</div>
+      ${renderVariantReports(selectedDates, { showMoney: false, compact: true, ticket: true })}
+      <div class="ticket-divider"></div>
+      ${renderViewerTotals(summary, isCustom || selectedDates.length > 1, { ticket: true })}
+    </section>
+  `;
+}
 function renderViewer(options = {}) {
   const selectedDates = getViewerDates();
   const summary = getSummaryForDates(selectedDates);
@@ -1200,13 +1233,13 @@ function viewerFilterButton(filter, label) {
   return `<button class="${store.viewerFilter === filter ? "active" : ""}" data-viewer-filter="${filter}">${label}</button>`;
 }
 
-function renderViewerTotals(summary, rangeMode) {
+function renderViewerTotals(summary, rangeMode, options = {}) {
   const salesFormula = rupiah(summary.revenue);
   const feeFormula = `${summary.slices} slice x ${rupiah(store.ownerFee)} =`;
   const pizzainFormula = `${rupiah(summary.revenue)} - ${rupiah(summary.ownerShare)} =`;
 
   return `
-    <section class="viewer-report-summary">
+    <section class="viewer-report-summary ${options.ticket ? "report-ticket-summary" : ""}">
       <div class="viewer-card-head">
         <h3>Laporan Penjualan</h3>
       </div>
@@ -1272,6 +1305,7 @@ function renderCalendarRange() {
 }
 
 function renderVariantReports(dates, options) {
+  const listClass = options.ticket ? "viewer-report-list ticket-report-list" : "viewer-report-list";
   const rows = store.pizzas
     .filter((pizza) => pizza.active)
     .map((pizza) => {
@@ -1286,7 +1320,7 @@ function renderVariantReports(dates, options) {
 
   if (options.compact) {
     return `
-      <div class="viewer-report-list">
+      <div class="${listClass}">
         ${rows
           .map(
             ({ pizza, sold }) => `
