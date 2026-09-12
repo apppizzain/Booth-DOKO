@@ -1440,6 +1440,81 @@ a {
   padding: 7px 10px;
 }
 
+
+.admin-quick-panels {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-quick-card {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(76, 30, 30, 0.05);
+  color: var(--ink);
+  display: grid;
+  gap: 3px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  min-height: 66px;
+  padding: 10px;
+  text-align: left;
+}
+
+.admin-quick-card > .material-symbols-outlined {
+  align-items: center;
+  background: var(--red-soft);
+  border-radius: 10px;
+  color: var(--red-deep);
+  display: inline-flex;
+  font-size: 20px;
+  grid-row: span 2;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.admin-quick-card > span:not(.material-symbols-outlined) {
+  color: #6c534e;
+  display: block;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin-quick-card > strong {
+  color: var(--ink);
+  display: block;
+  font-family: Manrope, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-quick-card.active {
+  background: linear-gradient(135deg, #b00822 0%, #d41432 52%, #ef554c 100%);
+  border-color: rgba(176, 8, 34, 0.18);
+  box-shadow: 0 14px 26px rgba(201, 21, 47, 0.2);
+  color: #fff;
+}
+
+.admin-quick-card.active > .material-symbols-outlined {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.admin-quick-card.active > span:not(.material-symbols-outlined),
+.admin-quick-card.active > strong {
+  color: #fff;
+}
+
 .daily-expense-panel {
   padding: 10px;
 }
@@ -1573,6 +1648,11 @@ a {
 .admin-list-head.secondary {
   background:
     linear-gradient(135deg, #7b2831 0%, #c9152f 54%, #ef8274 100%);
+}
+
+.admin-list-head.refill {
+  background:
+    linear-gradient(135deg, #9f1f2e 0%, #d41432 52%, #f06c5f 100%);
 }
 
 .admin-list-head.check {

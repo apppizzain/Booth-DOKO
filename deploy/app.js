@@ -16,6 +16,7 @@ const DOKO_APP_ID = "pizzain_doko_v1";
 const GAS_PHOTO_UPLOAD_URL = "https://script.google.com/macros/s/AKfycbyiQGAfG_AJSwMAaGTwsl1G5CiYmgKgBXyOuji9nsG4VOJ5hegolFL_bdroypwc8cT1AQ/exec";
 const ATTENDANCE_SETTINGS_KEY = `${DOKO_APP_ID}:attendance_settings`;
 const DAILY_EXPENSES_KEY = `${DOKO_APP_ID}:daily_expenses`;
+const REFILL_STOCK_PREFIX = "__refill__";
 const DEFAULT_ATTENDANCE_SETTINGS = {
   checkIn: "16:00",
   checkOut: "23:00",
@@ -25,6 +26,7 @@ const DEFAULT_ATTENDANCE_SETTINGS = {
 const store = {
   ownerFee: 2000,
   adminView: "dashboard",
+  adminQuickPanel: null,
   attendanceFilter: "in",
   adminUnlocked: false,
   adminPin: DEFAULT_ADMIN_PIN,
@@ -60,6 +62,7 @@ const store = {
   },
   inputDraft: {
     sales: {},
+    refill: {},
     stock: {},
   },
   expenseForm: {
@@ -231,9 +234,11 @@ async function loadRemoteData() {
   store.records = {};
   store.dailySubmitted = {};
   recordRows.forEach((row) => {
+    const stockParts = splitStockPayload(row.stock);
     store.records[row.record_date] = {
       sales: cleanDailyValues(row.sales),
-      stock: cleanDailyValues(row.stock),
+      refill: stockParts.refill,
+      stock: stockParts.stock,
     };
     store.dailySubmitted[row.record_date] = parseDailyProgress(row);
   });
@@ -250,6 +255,7 @@ async function loadRemoteData() {
   if (!store.attendance[today]) store.attendance[today] = { in: null, out: null };
   if (store.records[today]) {
     store.inputDraft.sales = { ...store.records[today].sales };
+    store.inputDraft.refill = { ...(store.records[today].refill || {}) };
     store.inputDraft.stock = { ...store.records[today].stock };
   }
   await loadRemoteDailyExpenses();
@@ -459,7 +465,7 @@ async function dbDeleteDailyExpense(id) {
 }
 
 async function dbUpsertDailyRecord(date) {
-  const record = store.records[date] || { sales: {}, stock: {} };
+  const record = store.records[date] || { sales: {}, refill: {}, stock: {} };
   const progress = getDailyProgress(date);
   return dbUpsert(
     "doko_daily_records",
@@ -467,7 +473,7 @@ async function dbUpsertDailyRecord(date) {
       app_id: DOKO_APP_ID,
       record_date: date,
       sales: withSubmittedFlag(record.sales, progress.sales),
-      stock: withSubmittedFlag(record.stock, progress.stock),
+      stock: withSubmittedFlag(packStockPayload(record.stock, record.refill), progress.stock),
       submitted_at: new Date().toISOString(),
     },
     "app_id,record_date"
@@ -491,8 +497,37 @@ async function dbUpsertAttendance(date) {
 
 function cleanDailyValues(values) {
   return Object.fromEntries(
-    Object.entries(values || {}).filter(([key]) => key !== "__submitted")
+    Object.entries(values || {}).filter(([key]) => key !== "__submitted" && !key.startsWith(REFILL_STOCK_PREFIX))
   );
+}
+
+function splitStockPayload(values) {
+  return Object.entries(values || {}).reduce(
+    (result, [key, value]) => {
+      if (key === "__submitted") return result;
+      const qty = Math.max(0, Number(value) || 0);
+      if (key.startsWith(REFILL_STOCK_PREFIX)) {
+        const pizzaId = key.slice(REFILL_STOCK_PREFIX.length);
+        if (pizzaId) result.refill[pizzaId] = qty;
+      } else {
+        result.stock[key] = qty;
+      }
+      return result;
+    },
+    { stock: {}, refill: {} }
+  );
+}
+
+function packStockPayload(stock = {}, refill = {}) {
+  const packed = { ...(stock || {}) };
+  Object.entries(refill || {}).forEach(([pizzaId, qty]) => {
+    packed[refillStockKey(pizzaId)] = Math.max(0, Number(qty) || 0);
+  });
+  return packed;
+}
+
+function refillStockKey(pizzaId) {
+  return `${REFILL_STOCK_PREFIX}${pizzaId}`;
 }
 
 function withSubmittedFlag(values, submitted) {
@@ -683,7 +718,7 @@ function renderAdminDashboard(summary) {
       ${store.viewerFilter === "custom" ? renderCalendarRange() : ""}
       <div class="loading-line">${store.viewerLoading ? `<span class="loading-dot"></span>Memuat laporan...` : `<span></span>${viewerDateDescription(selectedDates)}`}</div>
     </section>
-    ${selectedDate ? renderDailyExpenseForm(selectedDate) : ""}
+    ${selectedDate ? renderAdminQuickPanels(selectedDate) : ""}
     <section class="viewer-report-summary admin-report-summary">
       <div class="viewer-card-head">
         <h3>Laporan Penjualan</h3>
@@ -750,6 +785,56 @@ function renderAdminDashboard(summary) {
   `;
 }
 
+function renderAdminQuickPanels(date) {
+  const refillOpen = store.adminQuickPanel === "refill";
+  const expenseOpen = store.adminQuickPanel === "expense";
+  const refillTotal = getRefillTotalForDate(date);
+  const expenseTotal = getExpenseTotalForDates([date]);
+
+  return `
+    <section class="admin-quick-panels" aria-label="Aksi harian admin">
+      <button class="admin-quick-card ${expenseOpen ? "active" : ""}" type="button" data-admin-quick-panel="expense">
+        <span class="material-symbols-outlined">payments</span>
+        <span>Input Pengeluaran</span>
+        <strong>${rupiah(expenseTotal)}</strong>
+      </button>
+      <button class="admin-quick-card ${refillOpen ? "active" : ""}" type="button" data-admin-quick-panel="refill">
+        <span class="material-symbols-outlined">inventory_2</span>
+        <span>Refill Stok</span>
+        <strong>${refillTotal} Slice</strong>
+      </button>
+    </section>
+    ${expenseOpen ? renderDailyExpenseForm(date) : ""}
+    ${refillOpen ? renderRefillStockPanel(date) : ""}
+  `;
+}
+
+function renderRefillStockPanel(date) {
+  const refillSaved = isRefillSubmitted(date);
+  const editing = isAdminRecordEditing("refill", date);
+  const totalLabel = `${getRefillTotalForDate(date)} Slice`;
+
+  return `
+    <section class="panel admin-list-panel admin-refill-panel">
+      <div class="admin-list-head refill">
+        <h3>Refill Stok Pizza</h3>
+        ${refillSaved ? renderAdminListActions("refill", date, totalLabel) : renderRefillInputActions(date, totalLabel)}
+      </div>
+      ${renderAdminVariantList([date], "refill", { forceEditing: !refillSaved || editing })}
+    </section>
+  `;
+}
+
+function renderRefillInputActions(date, totalLabel) {
+  const saving = isAdminRecordEditing("refill", date) && store.adminEdit.saving;
+  return `
+    <div class="admin-list-actions">
+      <span>${saving ? "Menyimpan..." : totalLabel}</span>
+      <button class="admin-list-action-btn" type="button" data-admin-refill-save data-date="${date}" ${saving ? "disabled" : ""}>Simpan</button>
+    </div>
+  `;
+}
+
 function renderDailyExpenseForm(date) {
   return `
     <section class="panel daily-expense-panel">
@@ -794,41 +879,50 @@ function renderAdminListActions(type, date, totalLabel) {
   `;
 }
 
-function renderAdminVariantList(dates, type) {
+function renderAdminVariantList(dates, type, options = {}) {
   const editDate = dates.length === 1 ? dates[0] : "";
-  const editing = editDate && isAdminRecordEditing(type, editDate);
+  const forcedEditing = Boolean(options.forceEditing && editDate);
+  const editing = editDate && (isAdminRecordEditing(type, editDate) || forcedEditing);
   const rows = store.pizzas
     .filter((pizza) => pizza.active)
     .map((pizza) => {
       let sold = 0;
       let stock = 0;
+      let refill = 0;
       dates.forEach((date) => {
         sold += store.records[date]?.sales?.[pizza.id] || 0;
         stock += store.records[date]?.stock?.[pizza.id] || 0;
+        refill += store.records[date]?.refill?.[pizza.id] || 0;
       });
-      const draftValue = editing ? Number(store.adminEdit.values[pizza.id]) || 0 : null;
-      return { pizza, sold, stock, draftValue };
+      const draftSource = isAdminRecordEditing(type, editDate) ? store.adminEdit.values : (store.records[editDate]?.[type] || {});
+      const draftValue = editing ? Number(draftSource[pizza.id]) || 0 : null;
+      return { pizza, sold, stock, refill, draftValue };
     });
 
-  const isStock = type === "stock";
+  const getValue = (row) => {
+    if (editing) return row.draftValue;
+    if (type === "sales") return row.sold;
+    if (type === "refill") return row.refill;
+    return row.stock;
+  };
   return `
     <div class="admin-compact-list">
       ${rows
         .map(
-          ({ pizza, sold, stock, draftValue }) => {
-            const value = editing ? draftValue : isStock ? stock : sold;
+          (row) => {
+            const value = getValue(row);
             return `
             <article class="admin-compact-row">
               <div>
-                <h4>${pizza.name}</h4>
+                <h4>${row.pizza.name}</h4>
               </div>
               <div class="admin-compact-values">
                 ${
                   editing
-                    ? `<div class="admin-edit-stepper" aria-label="Edit ${pizza.name}">
-                        <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${pizza.id}" data-delta="-1">-</button>
+                    ? `<div class="admin-edit-stepper" aria-label="Edit ${row.pizza.name}">
+                        <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${row.pizza.id}" data-delta="-1">-</button>
                         <strong>${value}</strong>
-                        <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${pizza.id}" data-delta="1">+</button>
+                        <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${row.pizza.id}" data-delta="1">+</button>
                       </div>`
                     : `<span><strong>${value}</strong> SLICE</span>`
                 }
@@ -847,25 +941,38 @@ function getStockTotalForDate(date) {
   return store.pizzas.filter((pizza) => pizza.active).reduce((total, pizza) => total + (stock[pizza.id] || 0), 0);
 }
 
+function getRefillTotalForDate(date) {
+  const refill = store.records[date]?.refill || {};
+  return store.pizzas.filter((pizza) => pizza.active).reduce((total, pizza) => total + (refill[pizza.id] || 0), 0);
+}
+
+function isRefillSubmitted(date) {
+  const refill = store.records[date]?.refill || {};
+  return store.pizzas.some((pizza) => Object.prototype.hasOwnProperty.call(refill, pizza.id));
+}
+
 function getStockConsistencyRows(date) {
   const previousDate = getPreviousDate(date);
-  const currentRecord = store.records[date] || { sales: {}, stock: {} };
-  const previousRecord = store.records[previousDate] || { sales: {}, stock: {} };
+  const currentRecord = store.records[date] || { sales: {}, refill: {}, stock: {} };
+  const previousRecord = store.records[previousDate] || { sales: {}, refill: {}, stock: {} };
 
   return store.pizzas
     .filter((pizza) => pizza.active)
     .map((pizza) => {
       const previousStock = Number(previousRecord.stock?.[pizza.id]) || 0;
+      const refillToday = Number(currentRecord.refill?.[pizza.id]) || 0;
       const soldToday = Number(currentRecord.sales?.[pizza.id]) || 0;
       const currentStock = Number(currentRecord.stock?.[pizza.id]) || 0;
       const expectedStockUsage = soldToday + currentStock;
+      const availableStock = previousStock + refillToday;
 
       return {
         pizza,
         previousStock,
+        refillToday,
         soldToday,
         currentStock,
-        diff: previousStock - expectedStockUsage,
+        diff: availableStock - expectedStockUsage,
       };
     });
 }
@@ -890,7 +997,7 @@ function renderStockConsistencyCheck(date) {
             <article class="stock-check-row ${row.diff === 0 ? "ok" : "warning"}">
               <div>
                 <h4>${row.pizza.name}</h4>
-                <p>Kemarin ${row.previousStock} - (${row.soldToday} laku + ${row.currentStock} sisa)</p>
+                <p>Kemarin ${row.previousStock} + ${row.refillToday} refill - (${row.soldToday} laku + ${row.currentStock} sisa)</p>
               </div>
               <strong>${row.diff === 0 ? "Pas" : `${row.diff > 0 ? "+" : ""}${row.diff}`}</strong>
             </article>
@@ -946,7 +1053,7 @@ function isAdminRecordEditing(type, date) {
 }
 
 function beginAdminRecordEdit(type, date) {
-  const record = store.records[date] || { sales: {}, stock: {} };
+  const record = store.records[date] || { sales: {}, refill: {}, stock: {} };
   const source = record[type] || {};
   store.adminEdit = {
     type,
@@ -987,19 +1094,28 @@ function getAdminRecordDraftValues() {
     }, {});
 }
 
+function saveRefillInput(date) {
+  if (!isAdminRecordEditing("refill", date)) {
+    beginAdminRecordEdit("refill", date);
+  }
+  saveAdminRecordEdit("refill", date);
+}
+
 async function saveAdminRecordEdit(type, date) {
   if (!isAdminRecordEditing(type, date) || store.adminEdit.saving) return;
 
   const previousRecord = store.records[date]
-    ? { sales: { ...store.records[date].sales }, stock: { ...store.records[date].stock } }
+    ? { sales: { ...store.records[date].sales }, refill: { ...(store.records[date].refill || {}) }, stock: { ...store.records[date].stock } }
     : null;
   const previousProgress = getDailyProgress(date);
-  const record = store.records[date] || { sales: {}, stock: {} };
+  const record = store.records[date] || { sales: {}, refill: {}, stock: {} };
 
   store.adminEdit.saving = true;
   record[type] = getAdminRecordDraftValues();
   store.records[date] = record;
-  store.dailySubmitted[date] = { ...previousProgress, [type]: true };
+  if (type !== "refill") {
+    store.dailySubmitted[date] = { ...previousProgress, [type]: true };
+  }
   render();
 
   const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(date));
@@ -1017,7 +1133,8 @@ async function saveAdminRecordEdit(type, date) {
   }
 
   cancelAdminRecordEdit();
-  showToast(`${type === "stock" ? "Stok" : "Penjualan"} berhasil diperbarui.`, "success");
+  const label = type === "stock" ? "Stok" : type === "refill" ? "Refill" : "Penjualan";
+  showToast(`${label} berhasil disimpan.`, "success");
   render();
 }
 
@@ -2079,6 +2196,20 @@ function handleClick(event) {
     return;
   }
 
+  const quickPanelButton = event.target.closest("[data-admin-quick-panel]");
+  if (quickPanelButton) {
+    const panel = quickPanelButton.dataset.adminQuickPanel;
+    store.adminQuickPanel = store.adminQuickPanel === panel ? null : panel;
+    render();
+    return;
+  }
+
+  const refillSaveButton = event.target.closest("[data-admin-refill-save]");
+  if (refillSaveButton) {
+    saveRefillInput(refillSaveButton.dataset.date);
+    return;
+  }
+
   if (event.target.closest("[data-save-daily-expense]")) {
     saveDailyExpense();
     return;
@@ -2485,10 +2616,10 @@ async function submitDailyData() {
   render();
 
   const previousRecord = store.records[today]
-    ? { sales: { ...store.records[today].sales }, stock: { ...store.records[today].stock } }
+    ? { sales: { ...store.records[today].sales }, refill: { ...(store.records[today].refill || {}) }, stock: { ...store.records[today].stock } }
     : null;
   const previousProgress = getDailyProgress(today);
-  const record = store.records[today] || { sales: {}, stock: {} };
+  const record = store.records[today] || { sales: {}, refill: {}, stock: {} };
   record[submitType] = getDraftValues(submitType);
   store.records[today] = record;
   store.dailySubmitted[today] = { ...previousProgress, [submitType]: true };
@@ -2957,20 +3088,21 @@ function getViewerDates() {
 }
 
 function sumDraft(type) {
-  return Object.values(store.inputDraft[type]).reduce((sum, qty) => sum + qty, 0);
+  return Object.values(store.inputDraft[type] || {}).reduce((sum, qty) => sum + qty, 0);
 }
 
 function getDraftValues(type) {
   return store.pizzas
     .filter((pizza) => pizza.active)
     .reduce((values, pizza) => {
-      values[pizza.id] = Number(store.inputDraft[type][pizza.id]) || 0;
+      values[pizza.id] = Number(store.inputDraft[type]?.[pizza.id]) || 0;
       return values;
     }, {});
 }
 
 function isDraftLocked(type, date = isoDate(new Date())) {
-  return Boolean(getDailyProgress(date)[type] && !store.dailyEditUnlocked[type]);
+  const progressType = type === "refill" ? "stock" : type;
+  return Boolean(getDailyProgress(date)[progressType] && !store.dailyEditUnlocked[progressType]);
 }
 
 function getDailyProgress(date) {
