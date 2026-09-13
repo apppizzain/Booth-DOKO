@@ -17,6 +17,8 @@ const GAS_PHOTO_UPLOAD_URL = "https://script.google.com/macros/s/AKfycbyiQGAfG_A
 const ATTENDANCE_SETTINGS_KEY = `${DOKO_APP_ID}:attendance_settings`;
 const DAILY_EXPENSES_KEY = `${DOKO_APP_ID}:daily_expenses`;
 const REFILL_STOCK_PREFIX = "__refill__";
+const SALES_SHIFT_1_PREFIX = "__shift1__";
+const SALES_SHIFT_2_PREFIX = "__shift2__";
 const DEFAULT_ATTENDANCE_SETTINGS = {
   checkIn: "16:00",
   checkOut: "23:00",
@@ -27,6 +29,7 @@ const store = {
   ownerFee: 2000,
   adminView: "dashboard",
   adminQuickPanel: null,
+  reportView: "tenant",
   attendanceFilter: "in",
   adminUnlocked: false,
   adminPin: DEFAULT_ADMIN_PIN,
@@ -62,6 +65,8 @@ const store = {
   },
   inputDraft: {
     sales: {},
+    salesShift1: {},
+    salesShift2: {},
     refill: {},
     stock: {},
   },
@@ -235,8 +240,11 @@ async function loadRemoteData() {
   store.dailySubmitted = {};
   recordRows.forEach((row) => {
     const stockParts = splitStockPayload(row.stock);
+    const salesParts = splitSalesPayload(row.sales);
     store.records[row.record_date] = {
-      sales: cleanDailyValues(row.sales),
+      sales: salesParts.total,
+      salesShift1: salesParts.shift1,
+      salesShift2: salesParts.shift2,
       refill: stockParts.refill,
       stock: stockParts.stock,
     };
@@ -255,6 +263,8 @@ async function loadRemoteData() {
   if (!store.attendance[today]) store.attendance[today] = { in: null, out: null };
   if (store.records[today]) {
     store.inputDraft.sales = { ...store.records[today].sales };
+    store.inputDraft.salesShift1 = { ...(store.records[today].salesShift1 || store.records[today].sales || {}) };
+    store.inputDraft.salesShift2 = { ...(store.records[today].salesShift2 || {}) };
     store.inputDraft.refill = { ...(store.records[today].refill || {}) };
     store.inputDraft.stock = { ...store.records[today].stock };
   }
@@ -472,7 +482,7 @@ async function dbUpsertDailyRecord(date) {
     {
       app_id: DOKO_APP_ID,
       record_date: date,
-      sales: withSubmittedFlag(record.sales, progress.sales),
+      sales: withSubmittedFlag(packSalesPayload(record.salesShift1, record.salesShift2, record.sales), progress.sales),
       stock: withSubmittedFlag(packStockPayload(record.stock, record.refill), progress.stock),
       submitted_at: new Date().toISOString(),
     },
@@ -497,8 +507,67 @@ async function dbUpsertAttendance(date) {
 
 function cleanDailyValues(values) {
   return Object.fromEntries(
-    Object.entries(values || {}).filter(([key]) => key !== "__submitted" && !key.startsWith(REFILL_STOCK_PREFIX))
+    Object.entries(values || {}).filter(
+      ([key]) =>
+        key !== "__submitted" &&
+        !key.startsWith(REFILL_STOCK_PREFIX) &&
+        !key.startsWith(SALES_SHIFT_1_PREFIX) &&
+        !key.startsWith(SALES_SHIFT_2_PREFIX)
+    )
   );
+}
+
+function splitSalesPayload(values) {
+  const total = {};
+  const shift1 = {};
+  const shift2 = {};
+  let hasShiftValues = false;
+
+  Object.entries(values || {}).forEach(([key, value]) => {
+    if (key === "__submitted") return;
+    const qty = Math.max(0, Number(value) || 0);
+    if (key.startsWith(SALES_SHIFT_1_PREFIX)) {
+      const pizzaId = key.slice(SALES_SHIFT_1_PREFIX.length);
+      if (pizzaId) {
+        shift1[pizzaId] = qty;
+        hasShiftValues = true;
+      }
+      return;
+    }
+    if (key.startsWith(SALES_SHIFT_2_PREFIX)) {
+      const pizzaId = key.slice(SALES_SHIFT_2_PREFIX.length);
+      if (pizzaId) {
+        shift2[pizzaId] = qty;
+        hasShiftValues = true;
+      }
+      return;
+    }
+    total[key] = qty;
+  });
+
+  if (!hasShiftValues) {
+    return { total, shift1: { ...total }, shift2 };
+  }
+
+  store.pizzas.forEach((pizza) => {
+    total[pizza.id] = (Number(shift1[pizza.id]) || 0) + (Number(shift2[pizza.id]) || 0);
+  });
+
+  return { total, shift1, shift2 };
+}
+
+function packSalesPayload(shift1 = {}, shift2 = {}, fallbackTotal = {}) {
+  const combined = getCombinedSalesValues(shift1, shift2, fallbackTotal);
+  const packed = { ...combined };
+  store.pizzas.forEach((pizza) => {
+    packed[salesShiftKey(1, pizza.id)] = Math.max(0, Number(shift1?.[pizza.id]) || 0);
+    packed[salesShiftKey(2, pizza.id)] = Math.max(0, Number(shift2?.[pizza.id]) || 0);
+  });
+  return packed;
+}
+
+function salesShiftKey(shift, pizzaId) {
+  return (shift === 2 ? SALES_SHIFT_2_PREFIX : SALES_SHIFT_1_PREFIX) + pizzaId;
 }
 
 function splitStockPayload(values) {
@@ -890,7 +959,7 @@ function renderAdminVariantList(dates, type, options = {}) {
       let stock = 0;
       let refill = 0;
       dates.forEach((date) => {
-        sold += store.records[date]?.sales?.[pizza.id] || 0;
+        sold += getSalesQuantity(store.records[date] || {}, pizza.id, options.salesScope || "tenant");
         stock += store.records[date]?.stock?.[pizza.id] || 0;
         refill += store.records[date]?.refill?.[pizza.id] || 0;
       });
@@ -1105,13 +1174,23 @@ async function saveAdminRecordEdit(type, date) {
   if (!isAdminRecordEditing(type, date) || store.adminEdit.saving) return;
 
   const previousRecord = store.records[date]
-    ? { sales: { ...store.records[date].sales }, refill: { ...(store.records[date].refill || {}) }, stock: { ...store.records[date].stock } }
+    ? {
+        sales: { ...store.records[date].sales },
+        salesShift1: { ...(store.records[date].salesShift1 || {}) },
+        salesShift2: { ...(store.records[date].salesShift2 || {}) },
+        refill: { ...(store.records[date].refill || {}) },
+        stock: { ...store.records[date].stock },
+      }
     : null;
   const previousProgress = getDailyProgress(date);
   const record = store.records[date] || { sales: {}, refill: {}, stock: {} };
 
   store.adminEdit.saving = true;
   record[type] = getAdminRecordDraftValues();
+  if (type === "sales") {
+    record.salesShift1 = { ...record.sales };
+    record.salesShift2 = {};
+  }
   store.records[date] = record;
   if (type !== "refill") {
     store.dailySubmitted[date] = { ...previousProgress, [type]: true };
@@ -1490,16 +1569,17 @@ function renderInputAttendance(today, attendance) {
   const canCheckOut = Boolean(attendance.in && isDailySubmitted(today));
   const settings = getAttendanceSettings();
   return `
-    <section class="panel stack">
-      <div class="section-title">
+    <section class="panel stack attendance-panel">
+      <div class="section-title attendance-title">
         <span class="icon-tile"><span class="material-symbols-outlined">badge</span></span>
         <div>
           <h3>Absensi Hari Ini</h3>
-          <p class="input-attendance-meta">
-            <strong>${formatDate(today)}</strong>
-            <span>Jam kerja ${displayClock(settings.checkIn)} - ${displayClock(settings.checkOut)}</span>
-          </p>
+          <p>Laporan kehadiran staff pizzain tenant</p>
         </div>
+      </div>
+      <div class="input-attendance-meta attendance-meta-chips">
+        <span>${formatDate(today)}</span>
+        <span>Jam kerja ${displayClock(settings.checkIn)} - ${displayClock(settings.checkOut)}</span>
       </div>
       <div class="attendance-actions">
         ${renderAttendanceAction("in", attendance.in, "Masuk", "how_to_reg")}
@@ -1513,22 +1593,34 @@ function renderInputAttendance(today, attendance) {
 }
 
 function renderInputSales(activePizzas) {
-  const totalSales = sumDraft("sales");
   return `
-    <section class="panel sales-panel">
-      <div class="section-title solid">
+    <section class="panel sales-panel shift-sales-panel">
+      <div class="section-title solid compact-sales-title">
         <span class="icon-tile"><span class="material-symbols-outlined">point_of_sale</span></span>
         <div>
-          <h3>Penjualan Slice</h3>
-          <p>Isi jumlah slice yang terjual hari ini</p>
+          <h3>Laporan Penjualan</h3>
+          <p>Jumlah pizza terjual hari ini</p>
         </div>
       </div>
-      <div class="stack">
-        ${activePizzas.map((pizza) => renderCounterRow(pizza, "sales")).join("")}
+      <div class="sales-shift-stack">
+        ${renderSalesShiftCard("Shift 1", "salesShift1", activePizzas)}
+        ${renderSalesShiftCard("Shift 2", "salesShift2", activePizzas)}
       </div>
-      <div class="total-band">
-        <span>Total Slice Terjual</span>
-        <strong>${totalSales}</strong>
+    </section>
+  `;
+}
+
+function renderSalesShiftCard(label, type, activePizzas) {
+  const total = sumDraft(type);
+  const shiftClass = type === "salesShift1" ? "shift-one" : "shift-two";
+  return `
+    <section class="sales-shift-card ${shiftClass}" aria-label="Penjualan ${label}">
+      <div class="sales-shift-head">
+        <h4>${label}</h4>
+        <span>${total} slice</span>
+      </div>
+      <div class="sales-shift-list">
+        ${activePizzas.map((pizza) => renderCounterRow(pizza, type)).join("")}
       </div>
     </section>
   `;
@@ -1537,20 +1629,17 @@ function renderInputSales(activePizzas) {
 function renderInputStock(activePizzas) {
   const totalStock = sumDraft("stock");
   return `
-    <section class="panel stock-panel">
-      <div class="section-title coral">
-        <span class="icon-tile"><span class="material-symbols-outlined">inventory_2</span></span>
-        <div>
+    <section class="panel stock-panel compact-stock-panel">
+      <div class="stock-compact-head">
+        <div class="stock-compact-title">
+          <span class="icon-tile"><span class="material-symbols-outlined">inventory_2</span></span>
           <h3>Stok Pizza Tersisa</h3>
-          <p>Isi jumlah slice yang masih tersisa</p>
+          <p>Jumlah pizza di kulkas</p>
         </div>
+        <span class="stock-total-chip">${totalStock} slice</span>
       </div>
-      <div class="stack">
+      <div class="stock-compact-list">
         ${activePizzas.map((pizza) => renderCounterRow(pizza, "stock")).join("")}
-      </div>
-      <div class="total-band">
-        <span>Total Stok Tersisa</span>
-        <strong>${totalStock}</strong>
       </div>
     </section>
   `;
@@ -1660,7 +1749,7 @@ function renderAttendanceAction(type, record, label, icon, options = {}) {
 }
 
 function renderCounterRow(pizza, type) {
-  const value = store.inputDraft[type][pizza.id] || 0;
+  const value = store.inputDraft[type]?.[pizza.id] || 0;
   const locked = isDraftLocked(type);
   return `
     <article class="variant-row input-counter-row ${type}-row ${locked ? "is-locked" : ""}">
@@ -1703,8 +1792,11 @@ function renderSubmitBar(canSubmitDaily) {
 
 function renderAdminReport() {
   const selectedDates = getViewerDates();
-  const summary = getSummaryForDates(selectedDates);
+  const reportView = store.reportView || "tenant";
+  const reportLabel = reportView === "shift1" ? "Shift 1" : reportView === "shift2" ? "Shift 2" : "Tenant";
+  const summary = getSummaryForDates(selectedDates, { salesScope: reportView });
   const isCustom = store.viewerFilter === "custom";
+  const isTenantReport = reportView === "tenant";
 
   return `
     <section class="panel stack viewer-filter-panel admin-report-filter">
@@ -1713,6 +1805,11 @@ function renderAdminReport() {
         ${viewerFilterButton("yesterday", "Kemarin")}
         ${viewerFilterButton("custom", "Custom")}
       </div>
+      <div class="report-type-tabs" role="tablist" aria-label="Jenis laporan">
+        ${reportTypeButton("tenant", "Tenant")}
+        ${reportTypeButton("shift1", "Shift 1")}
+        ${reportTypeButton("shift2", "Shift 2")}
+      </div>
       ${isCustom ? renderCalendarRange() : ""}
     </section>
     <section class="admin-report-ticket" aria-label="Laporan untuk pemilik usaha">
@@ -1720,7 +1817,7 @@ function renderAdminReport() {
         <div class="ticket-head-copy">
           <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain DOKO" /></span>
           <div>
-            <span>Laporan Tenant</span>
+            <span>Laporan ${reportLabel}</span>
             <h3>Pizzain DOKO</h3>
             <p>${ticketDateDescription(selectedDates)}</p>
           </div>
@@ -1729,9 +1826,40 @@ function renderAdminReport() {
       </div>
       <div class="ticket-divider"></div>
       <div class="ticket-section-title">Detail Pizza Terjual</div>
-      ${renderVariantReports(selectedDates, { showMoney: false, compact: true, ticket: true })}
+      ${renderVariantReports(selectedDates, { showMoney: false, compact: true, ticket: true, salesScope: reportView })}
       <div class="ticket-divider"></div>
-      ${renderViewerTotals(summary, isCustom || selectedDates.length > 1, { ticket: true })}
+      ${isTenantReport ? renderViewerTotals(summary, isCustom || selectedDates.length > 1, { ticket: true }) : renderShiftReportTotals(summary, reportLabel)}
+    </section>
+  `;
+}
+
+function reportTypeButton(view, label) {
+  const active = store.reportView === view ? "active" : "";
+  return `<button class="${active}" type="button" data-report-view="${view}">${label}</button>`;
+}
+
+function renderShiftReportTotals(summary, label) {
+  const income = summary.slices * store.ownerFee;
+  const incomeFormula = `${summary.slices} slice x ${rupiah(store.ownerFee)} =`;
+
+  return `
+    <section class="viewer-report-summary report-ticket-summary shift-income-summary">
+      <div class="viewer-card-head">
+        <h3>Penghasilan ${label}</h3>
+      </div>
+      <div class="viewer-summary-row">
+        <div class="viewer-summary-copy">
+          <span class="viewer-summary-title">Penjualan ${label}</span>
+        </div>
+        <strong class="viewer-summary-value">${summary.slices} slice</strong>
+      </div>
+      <div class="viewer-summary-row highlight">
+        <div class="viewer-summary-copy">
+          <span class="viewer-summary-title">Penghasilan</span>
+          <em class="viewer-summary-formula">${incomeFormula}</em>
+        </div>
+        <strong class="viewer-summary-value">${rupiah(income)}</strong>
+      </div>
     </section>
   `;
 }
@@ -1844,7 +1972,7 @@ function renderVariantReports(dates, options) {
       let sold = 0;
       let stock = 0;
       dates.forEach((date) => {
-        sold += store.records[date]?.sales?.[pizza.id] || 0;
+        sold += getSalesQuantity(store.records[date] || {}, pizza.id, options.salesScope || "tenant");
         stock += store.records[date]?.stock?.[pizza.id] || 0;
       });
       return { pizza, sold, stock };
@@ -2041,6 +2169,13 @@ function handleClick(event) {
     render();
     return;
   }
+  const reportView = event.target.closest("[data-report-view]")?.dataset.reportView;
+  if (reportView) {
+    store.reportView = reportView;
+    render();
+    return;
+  }
+
 
   const inputPage = event.target.closest("[data-input-page]")?.dataset.inputPage;
   if (inputPage) {
@@ -2058,6 +2193,7 @@ function handleClick(event) {
       showToast("Klik Perbaharui Data dulu untuk mengubah qty.", "error");
       return;
     }
+    if (!store.inputDraft[type]) store.inputDraft[type] = {};
     store.inputDraft[type][id] = Math.max(0, (store.inputDraft[type][id] || 0) + delta);
     render();
     return;
@@ -2616,11 +2752,23 @@ async function submitDailyData() {
   render();
 
   const previousRecord = store.records[today]
-    ? { sales: { ...store.records[today].sales }, refill: { ...(store.records[today].refill || {}) }, stock: { ...store.records[today].stock } }
+    ? {
+        sales: { ...store.records[today].sales },
+        salesShift1: { ...(store.records[today].salesShift1 || {}) },
+        salesShift2: { ...(store.records[today].salesShift2 || {}) },
+        refill: { ...(store.records[today].refill || {}) },
+        stock: { ...store.records[today].stock },
+      }
     : null;
   const previousProgress = getDailyProgress(today);
-  const record = store.records[today] || { sales: {}, refill: {}, stock: {} };
-  record[submitType] = getDraftValues(submitType);
+  const record = store.records[today] || { sales: {}, salesShift1: {}, salesShift2: {}, refill: {}, stock: {} };
+  if (submitType === "sales") {
+    record.salesShift1 = getDraftValues("salesShift1");
+    record.salesShift2 = getDraftValues("salesShift2");
+    record.sales = getCombinedSalesValues(record.salesShift1, record.salesShift2);
+  } else {
+    record[submitType] = getDraftValues(submitType);
+  }
   store.records[today] = record;
   store.dailySubmitted[today] = { ...previousProgress, [submitType]: true };
   store.dailyEditUnlocked[submitType] = false;
@@ -3054,12 +3202,13 @@ function closeStream() {
   store.cameraStream = null;
 }
 
-function getSummaryForDates(dates) {
+function getSummaryForDates(dates, options = {}) {
+  const salesScope = options.salesScope || "tenant";
   return dates.reduce(
     (total, date) => {
       const record = store.records[date] || { sales: {}, stock: {} };
       store.pizzas.forEach((pizza) => {
-        const qty = record.sales[pizza.id] || 0;
+        const qty = getSalesQuantity(record, pizza.id, salesScope);
         total.slices += qty;
         total.revenue += qty * pizza.price;
         total.cost += qty * pizza.cost;
@@ -3087,8 +3236,29 @@ function getViewerDates() {
   return dates;
 }
 
+function getSalesQuantity(record, pizzaId, salesScope = "tenant") {
+  if (salesScope === "shift1") return Number(record.salesShift1?.[pizzaId]) || 0;
+  if (salesScope === "shift2") return Number(record.salesShift2?.[pizzaId]) || 0;
+  return Number(record.sales?.[pizzaId]) || 0;
+}
+
 function sumDraft(type) {
-  return Object.values(store.inputDraft[type] || {}).reduce((sum, qty) => sum + qty, 0);
+  return Object.values(store.inputDraft[type] || {}).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
+}
+
+function sumSalesDraft() {
+  return sumDraft("salesShift1") + sumDraft("salesShift2");
+}
+
+function getCombinedSalesValues(shift1 = {}, shift2 = {}, fallbackTotal = {}) {
+  const hasShiftPayload = Object.keys(shift1 || {}).length > 0 || Object.keys(shift2 || {}).length > 0;
+  return store.pizzas
+    .filter((pizza) => pizza.active || Object.prototype.hasOwnProperty.call(fallbackTotal || {}, pizza.id))
+    .reduce((values, pizza) => {
+      const combined = (Number(shift1?.[pizza.id]) || 0) + (Number(shift2?.[pizza.id]) || 0);
+      values[pizza.id] = hasShiftPayload ? combined : Number(fallbackTotal?.[pizza.id]) || 0;
+      return values;
+    }, {});
 }
 
 function getDraftValues(type) {
@@ -3101,7 +3271,7 @@ function getDraftValues(type) {
 }
 
 function isDraftLocked(type, date = isoDate(new Date())) {
-  const progressType = type === "refill" ? "stock" : type;
+  const progressType = type === "refill" ? "stock" : type.startsWith("sales") ? "sales" : type;
   return Boolean(getDailyProgress(date)[progressType] && !store.dailyEditUnlocked[progressType]);
 }
 

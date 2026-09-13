@@ -19,7 +19,7 @@
   --radius: 8px;
   --visible-vh: 100dvh;
   --topbar-height: 50px;
-  --statusbar-space: max(env(safe-area-inset-top, 0px), 46px);
+  --statusbar-space: max(env(safe-area-inset-top, 0px), 23px);
   --admin-tabs-height: 76px;
   --admin-tabs-gap: 8px;
 }
@@ -3444,3 +3444,1053 @@ body.pin-keyboard-active .admin-pin-screen {
 }
 
 
+
+/* Shift sales and report tabs */
+.shift-sales-panel {
+  padding: 10px;
+}
+
+.compact-sales-title {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.compact-sales-title .icon-tile {
+  height: 38px;
+  width: 38px;
+}
+
+.compact-sales-title h3 {
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.compact-sales-title p {
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.sales-shift-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.sales-shift-card {
+  background: #fff;
+  border: 1px solid rgba(201, 21, 47, 0.16);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.sales-shift-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.sales-shift-head h4 {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1;
+  margin: 0;
+}
+
+.sales-shift-head span {
+  background: var(--red-soft);
+  border-radius: 999px;
+  color: var(--red-deep);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  padding: 5px 8px;
+  text-transform: uppercase;
+}
+
+.sales-shift-list {
+  display: grid;
+  gap: 5px;
+}
+
+.sales-shift-card .input-counter-row {
+  gap: 6px;
+  min-height: 40px;
+  padding: 5px 6px;
+}
+
+.sales-shift-card .pizza-info {
+  gap: 6px;
+}
+
+.sales-shift-card .pizza-initial {
+  display: none;
+}
+
+.sales-shift-card .pizza-info h4 {
+  font-size: 13px;
+  line-height: 1.1;
+  -webkit-line-clamp: 1;
+}
+
+.sales-shift-card .counter {
+  gap: 4px;
+}
+
+.sales-shift-card .counter-btn {
+  height: 28px;
+  width: 28px;
+}
+
+.sales-shift-card .counter-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.sales-shift-card .count {
+  font-size: 15px;
+  min-width: 30px;
+  padding: 4px;
+}
+
+.compact-total-band {
+  margin-top: 8px;
+  min-height: 52px;
+  padding: 10px;
+}
+
+.compact-total-band strong {
+  font-size: 26px;
+}
+
+.report-type-tabs {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 3px;
+}
+
+.report-type-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 32px;
+  padding: 7px 8px;
+}
+
+.report-type-tabs button.active {
+  background: var(--red);
+  box-shadow: 0 8px 16px rgba(201, 21, 47, 0.18);
+  color: #fff;
+}
+
+.shift-income-summary .viewer-summary-row.highlight {
+  margin-top: 8px;
+}
+
+.sales-shift-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sales-shift-card .input-counter-row {
+  border-radius: 8px;
+  min-height: 36px;
+  padding: 4px;
+}
+
+.sales-shift-card .pizza-info h4 {
+  font-size: 12px;
+}
+
+.sales-shift-card .counter-btn {
+  height: 26px;
+  width: 26px;
+}
+
+.sales-shift-card .count {
+  font-size: 14px;
+  min-width: 26px;
+  padding: 3px;
+}
+
+@media (max-width: 350px) {
+  .sales-shift-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Sales shift polish v38 */
+.shift-sales-panel {
+  border-color: rgba(201, 21, 47, 0.2);
+  padding: 9px;
+}
+
+.sales-shift-stack {
+  gap: 7px;
+}
+
+.sales-shift-card {
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.sales-shift-card.shift-one {
+  background: linear-gradient(180deg, #fff3f5 0%, #fffafa 100%);
+  border-color: rgba(201, 21, 47, 0.24);
+}
+
+.sales-shift-card.shift-two {
+  background: linear-gradient(180deg, #fff9eb 0%, #fffdf8 100%);
+  border-color: rgba(188, 126, 20, 0.25);
+}
+
+.sales-shift-card.shift-two .sales-shift-head span {
+  background: #fff0cf;
+  color: #9a5b00;
+}
+
+.sales-shift-list {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.sales-shift-card .input-counter-row {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(201, 21, 47, 0.13);
+  border-radius: 9px;
+  box-shadow: none;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 40px;
+  padding: 5px 6px;
+}
+
+.sales-shift-card.shift-two .input-counter-row {
+  border-color: rgba(188, 126, 20, 0.16);
+}
+
+.sales-shift-card .pizza-info {
+  min-width: 0;
+}
+
+.sales-shift-card .pizza-info h4 {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 900;
+  line-height: 1.12;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.sales-shift-card .counter {
+  align-items: center;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 26px 28px 26px;
+}
+
+.sales-shift-card .counter-btn,
+.sales-shift-card .count {
+  border-radius: 8px;
+  height: 28px;
+}
+
+.sales-shift-card .counter-btn {
+  width: 26px;
+}
+
+.sales-shift-card .count {
+  align-items: center;
+  display: inline-flex;
+  font-size: 14px;
+  justify-content: center;
+  min-width: 28px;
+  padding: 0;
+}
+
+@media (max-width: 370px) {
+  .sales-shift-card .pizza-info h4 {
+    font-size: 12px;
+  }
+
+  .sales-shift-card .counter {
+    grid-template-columns: 24px 26px 24px;
+  }
+
+  .sales-shift-card .counter-btn {
+    width: 24px;
+  }
+
+  .sales-shift-card .counter-btn,
+  .sales-shift-card .count {
+    height: 26px;
+  }
+}
+
+/* Sales shift row layout v39 */
+.compact-sales-title {
+  margin-bottom: 7px;
+}
+
+.sales-shift-card {
+  padding: 7px;
+}
+
+.sales-shift-head {
+  margin-bottom: 5px;
+}
+
+.sales-shift-head h4 {
+  font-size: 15px;
+}
+
+.sales-shift-head span {
+  min-width: 68px;
+  text-align: center;
+}
+
+.sales-shift-card .input-counter-row {
+  background: #fff;
+  border: 1px solid rgba(201, 21, 47, 0.12);
+  border-radius: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 34px;
+  padding: 4px 5px 4px 8px;
+}
+
+.sales-shift-card.shift-two .input-counter-row {
+  border-color: rgba(188, 126, 20, 0.15);
+}
+
+.sales-shift-card .pizza-info h4 {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sales-shift-card .counter {
+  background: #fff7f8;
+  border-radius: 999px;
+  display: inline-grid;
+  grid-template-columns: 24px 32px 24px;
+  padding: 2px;
+}
+
+.sales-shift-card.shift-two .counter {
+  background: #fff4da;
+}
+
+.sales-shift-card .counter-btn {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  height: 24px;
+  width: 24px;
+}
+
+.sales-shift-card .counter-btn:hover:not(:disabled) {
+  background: rgba(201, 21, 47, 0.1);
+}
+
+.sales-shift-card.shift-two .counter-btn:hover:not(:disabled) {
+  background: rgba(188, 126, 20, 0.12);
+}
+
+.sales-shift-card .count {
+  background: #fff;
+  border: 1px solid rgba(201, 21, 47, 0.1);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+  height: 24px;
+  min-width: 32px;
+}
+
+.sales-shift-card.shift-two .count {
+  border-color: rgba(188, 126, 20, 0.14);
+}
+
+.sales-shift-card .counter-btn .material-symbols-outlined {
+  font-size: 17px;
+}
+
+@media (max-width: 370px) {
+  .sales-shift-card .input-counter-row {
+    min-height: 32px;
+    padding-left: 7px;
+  }
+
+  .sales-shift-card .pizza-info h4 {
+    font-size: 12.5px;
+  }
+
+  .sales-shift-card .counter {
+    grid-template-columns: 22px 28px 22px;
+  }
+
+  .sales-shift-card .counter-btn,
+  .sales-shift-card .count {
+    height: 22px;
+  }
+
+  .sales-shift-card .counter-btn {
+    width: 22px;
+  }
+
+  .sales-shift-card .count {
+    min-width: 28px;
+  }
+}
+
+/* Sales shift final compact v40 */
+.shift-sales-panel {
+  padding: 8px;
+}
+
+.compact-sales-title {
+  align-items: center;
+  margin-bottom: 7px;
+}
+
+.compact-sales-title h3 {
+  font-family: Fredoka, Manrope, system-ui, sans-serif;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.compact-sales-title p {
+  display: none;
+}
+
+.sales-shift-card {
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+  padding: 0;
+}
+
+.sales-shift-card.shift-one,
+.sales-shift-card.shift-two {
+  border-color: rgba(201, 21, 47, 0.22);
+}
+
+.sales-shift-head {
+  background: linear-gradient(135deg, #c9152f 0%, #ef434b 100%);
+  border-radius: 0;
+  margin: 0;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.sales-shift-head h4,
+.sales-shift-head span {
+  color: #fff;
+}
+
+.sales-shift-head h4 {
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.sales-shift-head span,
+.sales-shift-card.shift-two .sales-shift-head span {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  padding: 5px 9px;
+}
+
+.sales-shift-list {
+  gap: 3px;
+  padding: 6px;
+}
+
+.sales-shift-card .input-counter-row {
+  border-radius: 7px;
+  gap: 5px;
+  min-height: 30px;
+  padding: 3px 4px 3px 8px;
+}
+
+.sales-shift-card .pizza-info h4 {
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+.sales-shift-card .counter {
+  background: #fff1f3;
+  grid-template-columns: 22px 24px 22px;
+  padding: 1px;
+}
+
+.sales-shift-card.shift-two .counter {
+  background: #fff1f3;
+}
+
+.sales-shift-card .counter-btn,
+.sales-shift-card .count {
+  background: transparent;
+  border: 0;
+  height: 22px;
+}
+
+.sales-shift-card .counter-btn {
+  width: 22px;
+}
+
+.sales-shift-card .count,
+.sales-shift-card.shift-two .count {
+  color: var(--red-deep);
+  font-size: 13px;
+  min-width: 24px;
+}
+
+.sales-shift-card .counter-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
+@media (max-width: 370px) {
+  .compact-sales-title h3 {
+    font-size: 20px;
+  }
+
+  .sales-shift-head {
+    min-height: 32px;
+    padding: 6px 9px;
+  }
+
+  .sales-shift-list {
+    padding: 5px;
+  }
+
+  .sales-shift-card .input-counter-row {
+    min-height: 29px;
+    padding-bottom: 3px;
+    padding-top: 3px;
+  }
+}
+
+/* Stock compact panel v41 */
+.compact-stock-panel {
+  background: linear-gradient(180deg, #fff5f6 0%, #fffdfc 100%);
+  border-color: rgba(201, 21, 47, 0.22);
+  padding: 8px;
+}
+
+.stock-compact-head {
+  align-items: center;
+  background: linear-gradient(135deg, #c9152f 0%, #ef434b 100%);
+  border-radius: 11px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 8px 10px;
+}
+
+.stock-compact-title {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+}
+
+.stock-compact-title .icon-tile {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  height: 32px;
+  width: 32px;
+}
+
+.stock-compact-title h3 {
+  color: #fff;
+  font-family: Fredoka, Manrope, system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  margin: 0;
+}
+
+.stock-total-chip {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: #fff;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  min-width: 64px;
+  padding: 7px 10px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.stock-compact-list {
+  display: grid;
+  gap: 5px;
+  padding-top: 7px;
+}
+
+.compact-stock-panel .input-counter-row {
+  background: #fff;
+  border-color: rgba(201, 21, 47, 0.13);
+  border-radius: 8px;
+  box-shadow: none;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 36px;
+  padding: 4px 5px 4px 8px;
+}
+
+.compact-stock-panel .pizza-info {
+  gap: 0;
+  min-width: 0;
+}
+
+.compact-stock-panel .pizza-initial {
+  display: none;
+}
+
+.compact-stock-panel .pizza-info h4 {
+  color: var(--ink);
+  display: block;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.08;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-stock-panel .counter {
+  background: #fff1f3;
+  border-radius: 999px;
+  display: inline-grid;
+  gap: 3px;
+  grid-template-columns: 23px 25px 23px;
+  padding: 1px;
+}
+
+.compact-stock-panel .counter-btn,
+.compact-stock-panel .count {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--red-deep);
+  height: 23px;
+}
+
+.compact-stock-panel .counter-btn {
+  width: 23px;
+}
+
+.compact-stock-panel .count {
+  align-items: center;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 900;
+  justify-content: center;
+  min-width: 25px;
+  padding: 0;
+}
+
+.compact-stock-panel .counter-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
+@media (max-width: 370px) {
+  .stock-compact-title h3 {
+    font-size: 19px;
+  }
+
+  .stock-total-chip {
+    min-width: 58px;
+    padding: 6px 8px;
+  }
+
+  .compact-stock-panel .input-counter-row {
+    min-height: 34px;
+  }
+}
+
+/* Sales title and dense rows v42 */
+.shift-sales-panel {
+  padding: 7px;
+}
+
+.compact-sales-title {
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.shift-sales-panel .compact-sales-title h3 {
+  color: var(--red-deep);
+  font-family: Fredoka, Manrope, system-ui, sans-serif;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.shift-sales-panel .compact-sales-title p {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-top: 3px;
+}
+
+.sales-shift-stack {
+  gap: 6px;
+}
+
+.sales-shift-head {
+  min-height: 31px;
+  padding: 6px 9px;
+}
+
+.sales-shift-head h4 {
+  font-size: 14px;
+}
+
+.sales-shift-head span,
+.sales-shift-card.shift-two .sales-shift-head span {
+  font-size: 10.5px;
+  min-width: 62px;
+  padding: 5px 8px;
+}
+
+.sales-shift-list {
+  gap: 2px;
+  padding: 5px;
+}
+
+.sales-shift-card .input-counter-row {
+  border-radius: 6px;
+  gap: 4px;
+  min-height: 27px;
+  padding: 2px 3px 2px 7px;
+}
+
+.sales-shift-card .pizza-info h4 {
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+.sales-shift-card .counter {
+  gap: 2px;
+  grid-template-columns: 20px 22px 20px;
+  padding: 1px;
+}
+
+.sales-shift-card .counter-btn,
+.sales-shift-card .count {
+  height: 20px;
+}
+
+.sales-shift-card .counter-btn {
+  width: 20px;
+}
+
+.sales-shift-card .count,
+.sales-shift-card.shift-two .count {
+  font-size: 12.5px;
+  min-width: 22px;
+}
+
+.sales-shift-card .counter-btn .material-symbols-outlined {
+  font-size: 15px;
+}
+
+@media (max-width: 370px) {
+  .shift-sales-panel .compact-sales-title h3 {
+    font-size: 20px;
+  }
+
+  .shift-sales-panel .compact-sales-title p {
+    font-size: 10.5px;
+  }
+
+  .sales-shift-card .input-counter-row {
+    min-height: 26px;
+  }
+}
+
+/* Softer stock header title v43 */
+.stock-compact-title h3 {
+  font-weight: 650;
+}
+
+/* Wider sales counter and flatter rows v44 */
+.shift-sales-panel .compact-sales-title {
+  align-items: flex-start;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.shift-sales-panel .compact-sales-title > div {
+  padding-top: 1px;
+}
+
+.shift-sales-panel .compact-sales-title p {
+  display: block;
+  margin-top: 4px;
+}
+
+.sales-shift-card .input-counter-row {
+  min-height: 25px;
+  padding: 1px 3px 1px 7px;
+}
+
+.sales-shift-card .counter {
+  gap: 4px;
+  grid-template-columns: 28px 24px 28px;
+  padding: 1px 3px;
+}
+
+.sales-shift-card .counter-btn,
+.sales-shift-card .count {
+  height: 22px;
+}
+
+.sales-shift-card .counter-btn {
+  width: 28px;
+}
+
+.sales-shift-card .count,
+.sales-shift-card.shift-two .count {
+  min-width: 24px;
+}
+
+@media (max-width: 370px) {
+  .sales-shift-card .counter {
+    grid-template-columns: 26px 23px 26px;
+  }
+
+  .sales-shift-card .counter-btn {
+    width: 26px;
+  }
+}
+
+/* Stock header description v45 */
+.stock-compact-title {
+  align-items: center;
+}
+
+.stock-compact-title h3 {
+  line-height: 1;
+}
+
+.stock-compact-title p {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1;
+  margin: 3px 0 0;
+}
+
+/* Stock header stack and wider counter v46 */
+.stock-compact-title {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 9px;
+  row-gap: 2px;
+}
+
+.stock-compact-title .icon-tile {
+  grid-row: 1 / span 2;
+}
+
+.stock-compact-title h3,
+.stock-compact-title p {
+  grid-column: 2;
+}
+
+.stock-compact-title p {
+  margin-top: 0;
+}
+
+.compact-stock-panel .counter {
+  gap: 4px;
+  grid-template-columns: 30px 26px 30px;
+  padding: 1px 4px;
+}
+
+.compact-stock-panel .counter-btn {
+  width: 30px;
+}
+
+.compact-stock-panel .count {
+  min-width: 26px;
+}
+
+@media (max-width: 370px) {
+  .compact-stock-panel .counter {
+    grid-template-columns: 28px 25px 28px;
+  }
+
+  .compact-stock-panel .counter-btn {
+    width: 28px;
+  }
+}
+
+/* Attendance header chips v47 */
+.attendance-panel {
+  gap: 10px;
+}
+
+.attendance-title {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.attendance-title h3 {
+  font-family: Fredoka, Manrope, system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.attendance-title p {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.15;
+  margin-top: 5px;
+}
+
+.attendance-meta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: -2px;
+}
+
+.attendance-meta-chips span {
+  align-items: center;
+  background: #fff2f4;
+  border: 1px solid rgba(201, 21, 47, 0.14);
+  border-radius: 999px;
+  color: var(--red-deep);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  min-height: 26px;
+  padding: 7px 10px;
+}
+
+/* Attendance red header and centered chips v48 */
+.attendance-panel {
+  gap: 10px;
+  padding: 8px;
+}
+
+.attendance-title {
+  align-items: center;
+  background: linear-gradient(135deg, #c9152f 0%, #ef434b 100%);
+  border-radius: 11px;
+  color: #fff;
+  gap: 9px;
+  margin-bottom: 0;
+  min-height: 54px;
+  padding: 8px 10px;
+}
+
+.attendance-title .icon-tile {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  height: 34px;
+  width: 34px;
+}
+
+.attendance-title h3 {
+  color: #fff;
+  font-family: Fredoka, Manrope, system-ui, sans-serif;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.attendance-title p {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1.05;
+  margin-top: 4px;
+}
+
+.attendance-meta-chips {
+  justify-content: center;
+  margin-top: 0;
+  text-align: center;
+}
+
+.attendance-meta-chips span {
+  justify-content: center;
+}
+
+.topbar .brand-mark {
+  height: 38px;
+  width: 38px;
+}
+
+.topbar .brand h1 {
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.topbar .brand p {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Soft attendance buttons v49 */
+.attendance-btn,
+.attendance-btn.secondary {
+  background: linear-gradient(180deg, #fff6f7 0%, #fff 100%);
+  border: 1px solid rgba(201, 21, 47, 0.18);
+  box-shadow: 0 10px 24px rgba(201, 21, 47, 0.08);
+  color: var(--red-deep);
+  min-height: 86px;
+}
+
+.attendance-btn:hover:not(:disabled),
+.attendance-btn.secondary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffedf0 0%, #fffafa 100%);
+  border-color: rgba(201, 21, 47, 0.28);
+}
+
+.attendance-btn > .material-symbols-outlined {
+  color: var(--red);
+  font-size: 30px;
+}
+
+.attendance-btn > span:last-child {
+  color: var(--red-deep);
+  font-weight: 900;
+}
+
+.attendance-btn:disabled,
+.attendance-btn.secondary:disabled {
+  background: #fffafa;
+  color: #bd6b78;
+  opacity: 1;
+}
+
+.attendance-btn:disabled > .material-symbols-outlined {
+  color: #c95a69;
+}
