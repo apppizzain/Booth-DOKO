@@ -191,7 +191,7 @@ function updateVisibleViewport() {
 async function initializeDatabase() {
   store.dbLoading = true;
   store.dbError = "";
-  render();
+  if (!isLockedAdminPinRoute()) render();
 
   try {
     await loadRemoteData();
@@ -203,8 +203,12 @@ async function initializeDatabase() {
     showToast("Database belum siap. Jalankan schema DOKO dulu.", "error");
   } finally {
     store.dbLoading = false;
-    render();
+    if (!isLockedAdminPinRoute()) render();
   }
+}
+
+function isLockedAdminPinRoute() {
+  return normalizeRoute(location.pathname) === "/admin" && !store.adminUnlocked;
 }
 
 async function loadRemoteData() {
@@ -529,7 +533,7 @@ function splitSalesPayload(values) {
     if (key.startsWith(SALES_SHIFT_1_PREFIX)) {
       const pizzaId = key.slice(SALES_SHIFT_1_PREFIX.length);
       if (pizzaId) {
-        shift1[pizzaId] = qty;
+        shift2[pizzaId] = qty;
         hasShiftValues = true;
       }
       return;
@@ -537,7 +541,7 @@ function splitSalesPayload(values) {
     if (key.startsWith(SALES_SHIFT_2_PREFIX)) {
       const pizzaId = key.slice(SALES_SHIFT_2_PREFIX.length);
       if (pizzaId) {
-        shift2[pizzaId] = qty;
+        shift1[pizzaId] = qty;
         hasShiftValues = true;
       }
       return;
@@ -546,7 +550,7 @@ function splitSalesPayload(values) {
   });
 
   if (!hasShiftValues) {
-    return { total, shift1: { ...total }, shift2 };
+    return { total, shift1, shift2: { ...total } };
   }
 
   store.pizzas.forEach((pizza) => {
@@ -560,8 +564,8 @@ function packSalesPayload(shift1 = {}, shift2 = {}, fallbackTotal = {}) {
   const combined = getCombinedSalesValues(shift1, shift2, fallbackTotal);
   const packed = { ...combined };
   store.pizzas.forEach((pizza) => {
-    packed[salesShiftKey(1, pizza.id)] = Math.max(0, Number(shift1?.[pizza.id]) || 0);
-    packed[salesShiftKey(2, pizza.id)] = Math.max(0, Number(shift2?.[pizza.id]) || 0);
+    packed[salesShiftKey(2, pizza.id)] = Math.max(0, Number(shift1?.[pizza.id]) || 0);
+    packed[salesShiftKey(1, pizza.id)] = Math.max(0, Number(shift2?.[pizza.id]) || 0);
   });
   return packed;
 }
@@ -726,7 +730,7 @@ function renderAdminPin() {
         <div class="pin-entry" data-pin-focus>
           <span class="pin-label">PIN Admin</span>
           <div class="pin-dots" aria-hidden="true">${pinDots}</div>
-          <input id="admin-pin" class="pin-hidden-input" data-admin-pin type="password" inputmode="numeric" maxlength="4" value="${escapeHtml(store.adminPinInput)}" aria-label="PIN Admin" autofocus />
+          <input id="admin-pin" class="pin-hidden-input" data-admin-pin type="password" inputmode="numeric" maxlength="4" value="${escapeHtml(store.adminPinInput)}" aria-label="PIN Admin" />
         </div>
         <button class="btn full" data-unlock-admin>
           <span class="material-symbols-outlined">lock_open</span>
@@ -2128,7 +2132,9 @@ function handleClick(event) {
   }
 
   if (event.target.closest("[data-pin-focus]")) {
-    document.querySelector("[data-admin-pin]")?.focus();
+    const pinInput = document.querySelector("[data-admin-pin]");
+    pinInput?.focus({ preventScroll: true });
+    setTimeout(() => centerFocusedAdminPanel(pinInput), 80);
     return;
   }
 
@@ -2644,7 +2650,7 @@ function centerFocusedAdminPanel(target) {
   const delta = panelCenter - targetCenter;
 
   if (Math.abs(delta) > 8) {
-    window.scrollBy({ top: delta, behavior: "smooth" });
+    window.scrollBy({ top: delta, behavior: "auto" });
   }
 }
 
