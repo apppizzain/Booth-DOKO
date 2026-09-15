@@ -533,7 +533,7 @@ function splitSalesPayload(values) {
     if (key.startsWith(SALES_SHIFT_1_PREFIX)) {
       const pizzaId = key.slice(SALES_SHIFT_1_PREFIX.length);
       if (pizzaId) {
-        shift2[pizzaId] = qty;
+        shift1[pizzaId] = qty;
         hasShiftValues = true;
       }
       return;
@@ -541,7 +541,7 @@ function splitSalesPayload(values) {
     if (key.startsWith(SALES_SHIFT_2_PREFIX)) {
       const pizzaId = key.slice(SALES_SHIFT_2_PREFIX.length);
       if (pizzaId) {
-        shift1[pizzaId] = qty;
+        shift2[pizzaId] = qty;
         hasShiftValues = true;
       }
       return;
@@ -564,8 +564,8 @@ function packSalesPayload(shift1 = {}, shift2 = {}, fallbackTotal = {}) {
   const combined = getCombinedSalesValues(shift1, shift2, fallbackTotal);
   const packed = { ...combined };
   store.pizzas.forEach((pizza) => {
-    packed[salesShiftKey(2, pizza.id)] = Math.max(0, Number(shift1?.[pizza.id]) || 0);
-    packed[salesShiftKey(1, pizza.id)] = Math.max(0, Number(shift2?.[pizza.id]) || 0);
+    packed[salesShiftKey(1, pizza.id)] = Math.max(0, Number(shift1?.[pizza.id]) || 0);
+    packed[salesShiftKey(2, pizza.id)] = Math.max(0, Number(shift2?.[pizza.id]) || 0);
   });
   return packed;
 }
