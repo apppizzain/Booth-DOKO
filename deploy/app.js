@@ -1072,13 +1072,19 @@ function renderStockConsistencyCheck(date) {
                 <h4>${row.pizza.name}</h4>
                 <p>Kemarin ${row.previousStock} + ${row.refillToday} refill - (${row.soldToday} laku + ${row.currentStock} sisa)</p>
               </div>
-              <strong>${row.diff === 0 ? "Pas" : `${row.diff > 0 ? "+" : ""}${row.diff}`}</strong>
+              <strong>${formatStockDifference(row.diff)}</strong>
             </article>
           `
         )
         .join("")}
     </div>
   `;
+}
+
+function formatStockDifference(diff) {
+  if (diff === 0) return "Pas";
+  const amount = Math.abs(diff);
+  return diff > 0 ? `Kurang ${amount} slice` : `Lebih ${amount} slice`;
 }
 
 function renderExpenseList(dates) {

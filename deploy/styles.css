@@ -1869,11 +1869,12 @@ a {
   border-radius: 999px;
   display: inline-flex;
   font-family: Manrope, system-ui, sans-serif;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
   justify-content: center;
-  min-width: 46px;
+  min-width: 92px;
   padding: 6px 8px;
+  text-align: center;
 }
 
 .stock-check-row.ok > strong {
