@@ -1207,12 +1207,78 @@ a {
 .calendar-head {
   align-items: center;
   display: flex;
+  gap: 8px;
   justify-content: space-between;
   margin-bottom: 12px;
 }
 
 .calendar-head strong {
   font-family: Manrope, system-ui, sans-serif;
+}
+
+.calendar-month-nav {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.calendar-month-step,
+.calendar-month-title {
+  align-items: center;
+  appearance: none;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  display: inline-flex;
+  justify-content: center;
+}
+
+.calendar-month-step {
+  border-radius: 12px;
+  height: 30px;
+  width: 30px;
+}
+
+.calendar-month-step span {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.calendar-month-title {
+  border-radius: 999px;
+  min-height: 30px;
+  padding: 0 11px;
+}
+
+.calendar-month-title strong {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.calendar-month-step:active,
+.calendar-month-title:active {
+  transform: translateY(1px);
+}
+
+.calendar-month-picker {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  margin: 0 0 10px;
+}
+
+.calendar-month-picker select {
+  appearance: none;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 36px;
+  padding: 0 10px;
 }
 
 .calendar-grid {

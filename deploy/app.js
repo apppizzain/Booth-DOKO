@@ -43,6 +43,8 @@ const store = {
   rangeStart: isoDate(new Date()),
   rangeEnd: isoDate(new Date()),
   rangeAnchor: null,
+  calendarMonth: monthKey(new Date()),
+  calendarPickerOpen: false,
   viewerLoading: false,
   submitLoading: false,
   dbLoading: false,
@@ -1939,7 +1941,7 @@ function renderViewerTotals(summary, rangeMode, options = {}) {
 }
 
 function renderCalendarRange() {
-  const monthDate = new Date(`${store.rangeStart}T00:00:00`);
+  const monthDate = new Date(`${getCalendarMonthKey()}-01T00:00:00`);
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const first = new Date(year, month, 1);
@@ -1963,13 +1965,44 @@ function renderCalendarRange() {
   return `
     <div class="calendar">
       <div class="calendar-head">
-        <strong>${monthDate.toLocaleDateString("id-ID", { month: "long", year: "numeric" })}</strong>
+        <div class="calendar-month-nav">
+          <button class="calendar-month-step" type="button" data-calendar-month-delta="-1" aria-label="Bulan sebelumnya">
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+          <button class="calendar-month-title" type="button" data-calendar-month-toggle aria-expanded="${store.calendarPickerOpen}">
+            <strong>${monthDate.toLocaleDateString("id-ID", { month: "long", year: "numeric" })}</strong>
+          </button>
+          <button class="calendar-month-step" type="button" data-calendar-month-delta="1" aria-label="Bulan berikutnya">
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
         <span class="chip gray">${shortDate(store.rangeStart)} - ${shortDate(store.rangeEnd)}</span>
       </div>
+      ${store.calendarPickerOpen ? renderCalendarMonthPicker(monthDate) : ""}
       <div class="calendar-grid">
         ${["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"].map((day) => `<span class="weekday">${day}</span>`).join("")}
         ${cells.join("")}
       </div>
+    </div>
+  `;
+}
+
+function renderCalendarMonthPicker(monthDate) {
+  const selectedMonth = monthDate.getMonth();
+  const selectedYear = monthDate.getFullYear();
+  const years = getCalendarYearOptions(selectedYear);
+
+  return `
+    <div class="calendar-month-picker">
+      <select data-calendar-month-select aria-label="Pilih bulan">
+        ${Array.from({ length: 12 }, (_, index) => {
+          const label = new Date(selectedYear, index, 1).toLocaleDateString("id-ID", { month: "long" });
+          return `<option value="${index + 1}" ${index === selectedMonth ? "selected" : ""}>${label}</option>`;
+        }).join("")}
+      </select>
+      <select data-calendar-year-select aria-label="Pilih tahun">
+        ${years.map((year) => `<option value="${year}" ${year === selectedYear ? "selected" : ""}>${year}</option>`).join("")}
+      </select>
     </div>
   `;
 }
@@ -2275,6 +2308,18 @@ function handleClick(event) {
   const viewerFilter = event.target.closest("[data-viewer-filter]")?.dataset.viewerFilter;
   if (viewerFilter) {
     setViewerFilter(viewerFilter);
+    return;
+  }
+
+  const monthDeltaButton = event.target.closest("[data-calendar-month-delta]");
+  if (monthDeltaButton) {
+    shiftCalendarMonth(Number(monthDeltaButton.dataset.calendarMonthDelta));
+    return;
+  }
+
+  if (event.target.closest("[data-calendar-month-toggle]")) {
+    store.calendarPickerOpen = !store.calendarPickerOpen;
+    render();
     return;
   }
 
@@ -2684,6 +2729,14 @@ function unlockAdmin() {
 }
 
 function handleChange(event) {
+  if (event.target.matches("[data-calendar-month-select], [data-calendar-year-select]")) {
+    const calendar = event.target.closest(".calendar");
+    const month = Number(calendar?.querySelector("[data-calendar-month-select]")?.value);
+    const year = Number(calendar?.querySelector("[data-calendar-year-select]")?.value);
+    if (month && year) setCalendarMonth(year, month - 1);
+    return;
+  }
+
   const formField = event.target.dataset.formField;
   if (formField === "active") {
     store.pizzaForm.active = event.target.checked;
@@ -2919,14 +2972,22 @@ function updateTimers() {
 function setViewerFilter(filter) {
   store.viewerFilter = filter;
   store.rangeAnchor = null;
+  store.calendarPickerOpen = false;
   if (filter === "today") {
-    store.rangeStart = isoDate(new Date());
-    store.rangeEnd = isoDate(new Date());
+    const today = isoDate(new Date());
+    store.rangeStart = today;
+    store.rangeEnd = today;
+    store.calendarMonth = monthKey(new Date());
   }
   if (filter === "yesterday") {
-    const yesterday = isoDate(addDays(new Date(), -1));
+    const yesterdayDate = addDays(new Date(), -1);
+    const yesterday = isoDate(yesterdayDate);
     store.rangeStart = yesterday;
     store.rangeEnd = yesterday;
+    store.calendarMonth = monthKey(yesterdayDate);
+  }
+  if (filter === "custom") {
+    store.calendarMonth = monthKey(new Date(`${store.rangeStart}T00:00:00`));
   }
   store.viewerLoading = true;
   render();
@@ -2937,6 +2998,8 @@ function setViewerFilter(filter) {
 }
 
 function selectRangeDay(date) {
+  store.calendarMonth = monthKey(new Date(`${date}T00:00:00`));
+  store.calendarPickerOpen = false;
   if (!store.rangeAnchor) {
     store.rangeStart = date;
     store.rangeEnd = date;
@@ -2954,6 +3017,39 @@ function selectRangeDay(date) {
     store.viewerLoading = false;
     render();
   }, 420);
+}
+
+function getCalendarMonthKey() {
+  if (/^\d{4}-\d{2}$/.test(store.calendarMonth || "")) return store.calendarMonth;
+  return monthKey(new Date(`${store.rangeStart}T00:00:00`));
+}
+
+function shiftCalendarMonth(delta) {
+  const current = new Date(`${getCalendarMonthKey()}-01T00:00:00`);
+  current.setMonth(current.getMonth() + delta);
+  store.calendarMonth = monthKey(current);
+  store.calendarPickerOpen = false;
+  render();
+}
+
+function setCalendarMonth(year, month) {
+  store.calendarMonth = monthKey(new Date(year, month, 1));
+  store.calendarPickerOpen = false;
+  render();
+}
+
+function getCalendarYearOptions(selectedYear) {
+  const years = new Set([selectedYear]);
+  const dateYears = Object.keys(store.records)
+    .concat(Object.keys(store.dailyExpenses), Object.keys(store.attendance))
+    .map((date) => Number(String(date).slice(0, 4)))
+    .filter(Boolean);
+
+  dateYears.forEach((year) => years.add(year));
+  for (let year = selectedYear - 3; year <= selectedYear + 3; year += 1) {
+    years.add(year);
+  }
+  return Array.from(years).sort((a, b) => b - a);
 }
 
 function startCamera() {
@@ -3363,6 +3459,12 @@ function isoDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function monthKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
 }
 
 function formatDate(date) {
