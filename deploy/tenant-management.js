@@ -64,6 +64,13 @@ function inputTenantUrl(tenant) {
   return new URL(`/input/${encodeURIComponent(tenant.id)}`, location.origin).href;
 }
 
+function renderTenantLoading(title = "Memuat data", detail = store.tenantResolved ? (isAllTenants() ? "Semua Tenant" : tenantLabel()) : "Menyiapkan halaman", inline = false) {
+  return `<div class="tenant-loading ${inline ? "tenant-loading-inline" : "panel"}" role="status" aria-live="polite" aria-busy="true">
+    <span class="tenant-loading-mark" aria-hidden="true"><span class="tenant-loading-ring"></span></span>
+    <div class="tenant-loading-copy"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p></div>
+  </div>`;
+}
+
 function renderTenantSelector() {
   const disabled = Boolean(store.dbLoading || store.pendingWrites || store.staffSaving);
   if (!isAllTenants()) {
@@ -86,7 +93,6 @@ function renderTenantSelector() {
         ${store.tenants.map((tenant) => renderTenantOption(tenant.id, tenant.staff_name || "Staff", `${tenantLabel(tenant)}${tenant.active ? "" : " · Nonaktif"}`, "storefront", disabled || (!store.tenantsReady && tenant.id !== DEFAULT_TENANT.id))).join("")}
       </div>
     </details>
-    ${store.dbLoading ? `<small>Memuat data tenant...</small>` : ""}
     ${store.tenantError ? `<p class="tenant-error" role="alert">${escapeHtml(store.tenantError)} <button type="button" data-retry-tenant>Coba lagi</button></p>` : ""}
   </section>`;
 }
@@ -281,6 +287,7 @@ async function switchTenant(id) {
   store.combinedTenants = [];
   store.attendanceSettings = { ...DEFAULT_ATTENDANCE_SETTINGS };
   store.inputDraft = { sales: {}, refill: {}, stock: {} };
+  store.inputDate = ""; store.inputDraftDate = ""; store.inputDrafts = {};
   store.dailyEditUnlocked = { sales: false, stock: false };
   const url = new URL(location.href);
   url.searchParams.set("tenant", id);

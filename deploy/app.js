@@ -13,6 +13,7 @@ const SUPABASE_URL = "https://qipqhopjbwjquschrggt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpcHFob3BqYndqcXVzY2hyZ2d0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NjQ1MDYsImV4cCI6MjA5NzQ0MDUwNn0._LAfxDUc7JDb8SfGjL-XwoeC2ECbrJvDoEKx4_iTuH0";
 const DOKO_APP_ID = "pizzain_doko_v1";
 const REFILL_STOCK_PREFIX = "__refill__";
+const REFILL_TRAY_SIZE = 4;
 const SALES_SHIFT_1_PREFIX = "__shift1__";
 const SALES_SHIFT_2_PREFIX = "__shift2__";
 const DEFAULT_ATTENDANCE_SETTINGS = {
@@ -51,6 +52,9 @@ const store = {
   },
   attendanceSettings: { ...DEFAULT_ATTENDANCE_SETTINGS },
   inputPage: "sales",
+  inputDate: "",
+  inputDraftDate: "",
+  inputDrafts: {},
   viewerFilter: "today",
   rangeStart: isoDate(new Date()),
   rangeEnd: isoDate(new Date()),
@@ -209,6 +213,8 @@ async function initializeDatabase(reloadProfiles = true) {
   try {
     if (reloadProfiles) {
       await loadTenantProfiles();
+      if (generation !== access.generation) return;
+      render();
     }
     if (isAccessStaff()) {
       await loadStaffWorkspace();
@@ -297,12 +303,7 @@ async function loadRemoteData() {
 
   const today = isoDate(new Date());
   if (!store.attendance[today]) store.attendance[today] = { in: null, out: null };
-  if (store.records[today]) {
-    store.inputDraft.sales = { ...store.records[today].sales };
-    store.inputDraft.packs = salesPackCounts(store.records[today].salesDetail);
-    store.inputDraft.refill = { ...(store.records[today].refill || {}) };
-    store.inputDraft.stock = { ...store.records[today].stock };
-  }
+  resetInputDraftDates();
   store.dailyExpenses = normalizeDailyExpenses({ ...store.dailyExpenses, ...remoteExpenses });
   saveLocalDailyExpenses();
   syncLocalDailyExpensesToRemote(remoteExpenses);
@@ -520,7 +521,7 @@ async function dbDeleteDailyExpense(id) {
 async function dbUpsertDailyRecord(date, type) {
   const record = store.records[date] || { sales: {}, refill: {}, stock: {} };
   if (isAccessStaff()) {
-    if (!["sales","stock"].includes(type) || !canAccess(type === "sales" ? "input_sales" : "input_stock")) throw Error("Anda tidak memiliki hak input ini.");
+    if (!["sales","stock","refill"].includes(type) || !canAccess(`input_${type}`)) throw Error("Anda tidak memiliki hak input ini.");
     const values = cleanDailyValues(record[type]);
     if (type === "sales") Object.entries(record.salesDetail || {}).forEach(([id, detail]) => {
       if (Object.hasOwn(values, id)) values[`__loyang__${id}`] = detail.packs || 0;
@@ -684,8 +685,8 @@ async function persistDatabaseWrite(action) {
   }
 }
 function render() {
-  if (access.loading && hasAccessSession()) { app.innerHTML = ""; return; }
   if (!hasAccessSession()) { app.innerHTML = pinShell(renderAccessLogin()); return; }
+  if (store.dbReady && !store.dbLoading && !store.submitLoading && (isAccessStaff() || store.adminView === "input") && !isAllTenants()) syncInputDate();
   app.innerHTML = isAccessAdmin() ? shell("admin",renderAdmin()) : shell("staff",renderStaffPortal());
 
   if (store.attendancePhotoPreview) {
@@ -698,7 +699,7 @@ function render() {
 function shell(role, content) {
   const roleLabel = {
     admin: store.tenantResolved && !isAllTenants() ? staffTenantLabel() : "Halaman admin",
-    staff: `${access.actor?.name || "Staff"}${store.tenants.length ? " · " + tenantLabel() : ""}`,
+    staff: `${access.actor?.name || "Staff"}${store.tenantResolved && store.tenants.length ? " · " + tenantLabel() : ""}`,
     input: store.tenantResolved ? staffTenantLabel() : "Memuat tenant...",
     viewer: "Laporan bagi hasil tenant Pizzain",
   }[role];
@@ -738,7 +739,6 @@ function roleHref(role) {
 function renderAdminPin() { return renderAccessLogin(); }
 
 function renderAdmin() {
-  if (!store.tenantResolved) return `<main class="main narrow"><section class="panel stack"><p role="status">${escapeHtml(store.tenantError || "Memuat data tenant...")}</p>${store.tenantError ? '<button class="btn secondary" data-retry-tenant>Coba lagi</button>' : ""}</section></main>`;
   if (store.adminView === "pizza" || store.adminView === "fee") {
     store.adminView = "settings";
   }
@@ -752,7 +752,7 @@ function renderAdmin() {
         ${adminMenuButton("staff", "groups", "Staff")}
         ${adminMenuButton("settings", "settings", "Setting")}
       </nav>
-      ${renderTenantSelector()}
+      ${store.tenantResolved ? renderTenantSelector() : ""}
       <section class="stack">
         ${renderAdminContent(summary)}
       </section>
@@ -762,7 +762,7 @@ function renderAdmin() {
 
 function adminMenuButton(view, icon, label) {
   return `
-    <button class="${store.adminView === view ? "active" : ""}" data-admin-view="${view}">
+    <button class="${store.adminView === view ? "active" : ""}" data-admin-view="${view}" ${!store.tenantResolved || store.dbLoading ? "disabled" : ""}>
       <span class="material-symbols-outlined">${icon}</span>
       ${label}
     </button>
@@ -770,8 +770,9 @@ function adminMenuButton(view, icon, label) {
 }
 
 function renderAdminContent(summary) {
+  if (!store.tenantResolved) return store.tenantError ? `<section class="panel stack"><p role="alert">${escapeHtml(store.tenantError)}</p><button class="btn secondary" data-retry-tenant>Coba lagi</button></section>` : renderTenantLoading();
   if (store.adminView === "staff") return renderAccessManagement();
-  if (store.dbLoading) return '<section class="panel"><p role="status">Memuat data tenant...</p></section>';
+  if (store.dbLoading) return renderTenantLoading();
   if (store.tenantError) return '<section class="panel"><p role="alert">' + escapeHtml(store.tenantError) + '</p><button class="btn secondary" type="button" data-retry-tenant>Coba lagi</button></section>';
   if (isAllTenants()) return renderCombinedTenants();
   if (store.adminView === "input") return renderInput({embedded:true});
@@ -883,7 +884,7 @@ function renderAdminQuickPanels(date) {
       <button class="admin-quick-card ${refillOpen ? "active" : ""}" type="button" data-admin-quick-panel="refill">
         <span class="material-symbols-outlined">inventory_2</span>
         <span>Refill Stok</span>
-        <strong>${refillTotal} Slice</strong>
+        <strong>${formatRefillTrays(refillTotal)} Loyang</strong>
       </button>
     </section>
     ${expenseOpen ? renderDailyExpenseForm(date) : ""}
@@ -894,7 +895,7 @@ function renderAdminQuickPanels(date) {
 function renderRefillStockPanel(date) {
   const refillSaved = isRefillSubmitted(date);
   const editing = isAdminRecordEditing("refill", date);
-  const totalLabel = `${getRefillTotalForDate(date)} Slice`;
+  const totalLabel = `${formatRefillTrays(getRefillTotalForDate(date))} Loyang`;
 
   return `
     <section class="panel admin-list-panel admin-refill-panel">
@@ -902,6 +903,7 @@ function renderRefillStockPanel(date) {
         <h3>Refill Stok Pizza</h3>
         ${refillSaved ? renderAdminListActions("refill", date, totalLabel) : renderRefillInputActions(date, totalLabel)}
       </div>
+      <p class="input-refill-note">1 loyang = 4 slice · Total ${getRefillTotalForDate(date)} slice</p>
       ${renderAdminVariantList([date], "refill", { forceEditing: !refillSaved || editing })}
     </section>
   `;
@@ -1000,16 +1002,17 @@ function renderAdminVariantList(dates, type, options = {}) {
             <article class="admin-compact-row">
               <div>
                 <h4>${row.pizza.name}</h4>
+                ${type === "refill" ? `<small class="refill-slice-caption">${value} slice</small>` : ""}
               </div>
               <div class="admin-compact-values">
                 ${
                   editing
                     ? `<div class="admin-edit-stepper" aria-label="Edit ${row.pizza.name}">
                         <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${row.pizza.id}" data-delta="-1">-</button>
-                        <strong>${value}</strong>
+                        <strong>${type === "refill" ? formatRefillTrays(value) : value}</strong>
                         <button type="button" data-admin-record-delta="${type}" data-date="${editDate}" data-id="${row.pizza.id}" data-delta="1">+</button>
                       </div>`
-                    : `<span><strong>${value}</strong> SLICE</span>`
+                    : `<span><strong>${type === "refill" ? formatRefillTrays(value) : value}</strong> ${type === "refill" ? "LOYANG" : "SLICE"}</span>`
                 }
               </div>
             </article>
@@ -1173,7 +1176,7 @@ function adjustAdminRecordValue(type, date, id, delta) {
   if (!isAdminRecordEditing(type, date)) {
     beginAdminRecordEdit(type, date);
   }
-  store.adminEdit.values[id] = Math.max(0, (Number(store.adminEdit.values[id]) || 0) + delta);
+  store.adminEdit.values[id] = Math.max(0, (Number(store.adminEdit.values[id]) || 0) + delta * (type === "refill" ? REFILL_TRAY_SIZE : 1));
   render();
 }
 
@@ -1560,21 +1563,70 @@ function renderPhotoPreviewModal() {
     </div>
   `;
 }
-function renderInput(options = {}) {
-  if (!store.tenantResolved || store.dbLoading || store.tenantError || !currentTenant.active) {
-    return '<main class="main narrow"><section class="panel stack"><h3>' + escapeHtml(store.tenantResolved ? staffTenantLabel() : "Input Tenant") + '</h3><p role="status">' + escapeHtml(store.tenantError || (!currentTenant.active ? "Staff ini sudah nonaktif. Hubungi admin." : "Memuat data tenant...")) + '</p><button class="btn secondary" type="button" data-retry-tenant>Coba Lagi</button></section></main>';
+function inputRecordDate() { return (isAccessAdmin() && store.inputDate) || isoDate(new Date()); }
+
+function cloneInputDraft(draft) {
+  return { sales: { ...draft.sales }, packs: { ...draft.packs }, stock: { ...draft.stock }, refill: { ...draft.refill } };
+}
+
+function syncInputDate() {
+  const date = inputRecordDate();
+  if (store.inputDraftDate === date) return false;
+  if (store.inputDraftDate) store.inputDrafts[store.inputDraftDate] = { draft: cloneInputDraft(store.inputDraft), unlocked: { ...store.dailyEditUnlocked } };
+  const cached = store.inputDrafts[date];
+  const record = store.records[date] || {};
+  store.inputDraft = cached ? cloneInputDraft(cached.draft) : { sales: { ...record.sales }, packs: salesPackCounts(record.salesDetail), stock: { ...record.stock }, refill: { ...record.refill } };
+  store.dailyEditUnlocked = cached ? { ...cached.unlocked } : { sales: false, stock: false };
+  store.inputDraftDate = date;
+  return true;
+}
+
+function resetInputDraftDates() {
+  store.inputDraftDate = "";
+  store.inputDrafts = {};
+  syncInputDate();
+}
+
+function setInputDate(value) {
+  if (!isAccessAdmin()) return;
+  if (store.submitLoading || store.pendingWrites || store.dbLoading) return;
+  if (value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value < "0001-01-01" || isoDate(new Date(`${value}T00:00:00`)) !== value)) {
+    showToast("Pilih tanggal yang valid.", "error"); return;
   }
-  const showSubmit = !options.preview && (store.inputPage === "sales" || store.inputPage === "stock");
+  store.inputDate = value;
+  syncInputDate();
+  render();
+}
+
+function renderInputDatePicker() {
+  if (!isAccessAdmin()) return "";
+  const date = inputRecordDate();
+  const disabled = store.submitLoading || store.pendingWrites || store.dbLoading;
+  return `<section class="panel input-date-panel" aria-label="Tanggal laporan input">
+    <span class="input-date-icon material-symbols-outlined" aria-hidden="true">calendar_month</span>
+    <label class="input-date-field"><span>Tanggal input${!store.inputDate ? '<small>Hari ini</small>' : ''}</span><input type="date" data-input-date aria-label="Tanggal input" min="0001-01-01" max="9999-12-31" value="${escapeHtml(date)}" ${disabled ? "disabled" : ""} /></label>
+    ${store.inputDate ? `<button class="input-date-today" type="button" data-input-today ${disabled ? "disabled" : ""}>Hari Ini</button>` : ''}
+  </section>`;
+}
+
+function renderInput(options = {}) {
+  if (store.tenantError || (store.tenantResolved && !currentTenant.active)) {
+    return '<main class="main narrow"><section class="panel stack"><h3>' + escapeHtml(store.tenantResolved ? staffTenantLabel() : "Input Tenant") + '</h3><p role="alert">' + escapeHtml(store.tenantError || "Staff ini sudah nonaktif. Hubungi admin.") + '</p><button class="btn secondary" type="button" data-retry-tenant>Coba Lagi</button></section></main>';
+  }
+  if (!store.tenantResolved || store.dbLoading) return `<main class="main narrow">${renderTenantLoading()}</main>`;
+  const showSubmit = !options.preview && ["sales", "stock", "refill"].includes(store.inputPage);
   const activePizzas = store.pizzas.filter((pizza) => pizza.active);
   const previewClass = options.preview || options.embedded ? "" : "main narrow";
 
   return `
     <main class="${previewClass}">
-      <nav class="input-tabs" aria-label="Halaman input">
+      <nav class="input-tabs input-tabs-with-refill" aria-label="Halaman input">
         ${inputPageButton("sales", "point_of_sale", "Penjualan")}
         ${inputPageButton("stock", "inventory_2", "Stok")}
+        ${inputPageButton("refill", "inventory", "Refill")}
         ${inputPageButton("timer", "timer", "Timer")}
       </nav>
+      ${showSubmit ? renderInputDatePicker() : ""}
       ${renderInputPage({ activePizzas })}
     </main>
     ${showSubmit ? renderSubmitBar() : ""}
@@ -1583,7 +1635,7 @@ function renderInput(options = {}) {
 
 function inputPageButton(page, icon, label) {
   return `
-    <button class="${store.inputPage === page ? "active" : ""}" data-input-page="${page}">
+    <button class="${store.inputPage === page ? "active" : ""}" data-input-page="${page}" ${!store.tenantResolved || store.dbLoading ? "disabled" : ""}>
       <span class="material-symbols-outlined">${icon}</span>
       ${label}
     </button>
@@ -1593,6 +1645,7 @@ function inputPageButton(page, icon, label) {
 function renderInputPage({ activePizzas }) {
   if (store.inputPage === "sales") return renderInputSales(activePizzas);
   if (store.inputPage === "stock") return renderInputStock(activePizzas);
+  if (store.inputPage === "refill") return renderInputRefill(activePizzas);
   if (store.inputPage === "timer") return renderInputTimers();
   return renderInputSales(activePizzas);
 }
@@ -1638,6 +1691,21 @@ function renderInputStock(activePizzas) {
       </div>
     </section>
   `;
+}
+
+function renderInputRefill(activePizzas) {
+  return `<section class="panel compact-stock-panel input-refill-panel">
+    <div class="stock-compact-head"><div class="stock-compact-title">
+      <span class="icon-tile"><span class="material-symbols-outlined">inventory</span></span>
+      <h3>Refill Stok</h3>
+    </div><span class="stock-total-chip">${formatRefillTrays(sumDraft("refill"))} loyang</span></div>
+    <p class="input-refill-note">1 loyang = 4 slice · Total ${sumDraft("refill")} slice</p>
+    <div class="stock-compact-list">${activePizzas.map(pizza => renderCounterRow(pizza,"refill")).join("")}</div>
+  </section>`;
+}
+
+function formatRefillTrays(slices) {
+  return (Number(slices || 0) / REFILL_TRAY_SIZE).toLocaleString("id-ID", { maximumFractionDigits: 2 });
 }
 
 function renderInputTimers() {
@@ -1719,8 +1787,8 @@ function renderTimerCard(timer) {
 
 
 function renderCounterRow(pizza, type) {
-  if (type === "sales" && (pizza.packSize || store.records[isoDate(new Date())]?.salesDetail?.[pizza.id]?.pack_size)) {
-    return renderPackSalesRow(pizza, store.inputDraft.sales, store.inputDraft.packs || {}, store.records[isoDate(new Date())]?.salesDetail || {});
+  if (type === "sales" && (pizza.packSize || store.records[inputRecordDate()]?.salesDetail?.[pizza.id]?.pack_size)) {
+    return renderPackSalesRow(pizza, store.inputDraft.sales, store.inputDraft.packs || {}, store.records[inputRecordDate()]?.salesDetail || {});
   }
   const value = store.inputDraft[type]?.[pizza.id] || 0;
   const locked = isDraftLocked(type);
@@ -1730,14 +1798,15 @@ function renderCounterRow(pizza, type) {
         <span class="pizza-initial">${getInitials(pizza.name)}</span>
         <div>
           <h4>${pizza.name}</h4>
+          ${type === "refill" ? `<small class="refill-slice-caption">${value} slice</small>` : ""}
         </div>
       </div>
-      <div class="counter" aria-label="${pizza.name} ${type}">
-        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="-1" aria-label="Kurangi ${pizza.name}" ${locked ? "disabled" : ""}>
+      <div class="counter" aria-label="${pizza.name} ${type === "refill" ? "loyang" : type}">
+        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="-1" aria-label="Kurangi ${type === "refill" ? '1 loyang ' : ''}${pizza.name}" ${locked ? "disabled" : ""}>
           <span class="material-symbols-outlined">remove</span>
         </button>
-        <span class="count">${value}</span>
-        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="1" aria-label="Tambah ${pizza.name}" ${locked ? "disabled" : ""}>
+        <span class="count">${type === "refill" ? formatRefillTrays(value) : value}</span>
+        <button class="counter-btn" data-counter="${type}" data-id="${pizza.id}" data-delta="1" aria-label="Tambah ${type === "refill" ? '1 loyang ' : ''}${pizza.name}" ${locked ? "disabled" : ""}>
           <span class="material-symbols-outlined">add</span>
         </button>
       </div>
@@ -1746,8 +1815,8 @@ function renderCounterRow(pizza, type) {
 }
 
 function renderSubmitBar() {
-  const type = store.inputPage === "stock" ? "stock" : "sales";
-  const pageLabel = type === "stock" ? "Stok" : "Penjualan";
+  const type = ["stock", "refill"].includes(store.inputPage) ? store.inputPage : "sales";
+  const pageLabel = type === "refill" ? "Refill Stok" : type === "stock" ? "Stok" : "Penjualan";
   const locked = isDraftLocked(type);
   const label = store.submitLoading
     ? `<span class="spinner"></span>Menyimpan...`
@@ -2196,6 +2265,7 @@ function handleClick(event) {
 
 
   const inputPage = event.target.closest("[data-input-page]")?.dataset.inputPage;
+  if (event.target.closest("[data-input-today]")) { setInputDate(""); return; }
   if (inputPage) {
     if (isAccessStaff() && !staffPages().some(([page])=>page===inputPage)) return;
     store.inputPage = inputPage;
@@ -2212,9 +2282,10 @@ function handleClick(event) {
       if (!isAccessAdmin() || !isAdminRecordEditing("sales", date) || store.adminEdit.saving) return;
       adjustPackSale(store.adminEdit.values, store.adminEdit.packs, pizza, packCounter.dataset.packCounter, Number(packCounter.dataset.delta), store.records[date]?.salesDetail?.[pizza.id]);
     } else {
+      syncInputDate();
       if (!canAccess("input_sales") || isDraftLocked("sales")) return;
       if (!store.inputDraft.packs) store.inputDraft.packs = {};
-      adjustPackSale(store.inputDraft.sales, store.inputDraft.packs, pizza, packCounter.dataset.packCounter, Number(packCounter.dataset.delta), store.records[isoDate(new Date())]?.salesDetail?.[pizza.id]);
+      adjustPackSale(store.inputDraft.sales, store.inputDraft.packs, pizza, packCounter.dataset.packCounter, Number(packCounter.dataset.delta), store.records[inputRecordDate()]?.salesDetail?.[pizza.id]);
     }
     render();
     return;
@@ -2222,16 +2293,17 @@ function handleClick(event) {
 
   const counter = event.target.closest("[data-counter]");
   if (counter) {
+    syncInputDate();
     const type = counter.dataset.counter;
     const id = counter.dataset.id;
     const delta = Number(counter.dataset.delta);
-    if (isAccessStaff() && !canAccess(type === "sales" ? "input_sales" : "input_stock")) return;
+    if (!["sales","stock","refill"].includes(type) || (isAccessStaff() && !canAccess(`input_${type}`))) return;
     if (isDraftLocked(type)) {
       showToast("Klik Perbaharui Data dulu untuk mengubah qty.", "error");
       return;
     }
     if (!store.inputDraft[type]) store.inputDraft[type] = {};
-    store.inputDraft[type][id] = Math.max(0, (store.inputDraft[type][id] || 0) + delta);
+    store.inputDraft[type][id] = Math.max(0, (store.inputDraft[type][id] || 0) + delta * (type === "refill" ? REFILL_TRAY_SIZE : 1));
     render();
     return;
   }
@@ -2702,6 +2774,7 @@ function unlockAdmin() { return loginAccess(); }
 function handleChange(event) {
   if (handleAccessInput(event)) return;
   if (!hasAccessSession()) return;
+  if (event.target.matches("[data-input-date]")) { setInputDate(event.target.value); return; }
   if (event.target.matches("[data-tenant-select]")) { switchTenant(event.target.value); return; }
 
   if (event.target.matches("[data-calendar-month-select], [data-calendar-year-select]")) {
@@ -2778,10 +2851,11 @@ async function savePizza() {
 }
 async function submitDailyData() {
   if (store.submitLoading || store.dbLoading || !store.dbReady || !store.tenantResolved || store.tenantError || !currentTenant.active) return;
-  const today = isoDate(new Date());
-  const submitType = store.inputPage === "stock" ? "stock" : "sales";
-  if (isAccessStaff() && !canAccess(submitType === "stock" ? "input_stock" : "input_sales")) return;
-  const submitLabel = submitType === "stock" ? "Stok" : "Penjualan";
+  const today = inputRecordDate();
+  const submitType = ["stock", "refill"].includes(store.inputPage) ? store.inputPage : "sales";
+  if (isAccessStaff() && !canAccess(`input_${submitType}`)) return;
+  if (syncInputDate()) { showToast("Tanggal berganti. Periksa jumlah sebelum menyimpan.", "error"); render(); return; }
+  const submitLabel = submitType === "refill" ? "Refill stok" : submitType === "stock" ? "Stok" : "Penjualan";
 
   if (isDraftLocked(submitType, today)) {
     store.dailyEditUnlocked[submitType] = true;
@@ -2810,7 +2884,7 @@ async function submitDailyData() {
     record[submitType] = getDraftValues(submitType);
   }
   store.records[today] = record;
-  store.dailySubmitted[today] = { ...previousProgress, [submitType]: true };
+  if (submitType !== "refill") store.dailySubmitted[today] = { ...previousProgress, [submitType]: true };
   store.dailyEditUnlocked[submitType] = false;
 
   const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(today,submitType));
@@ -2832,8 +2906,8 @@ async function submitDailyData() {
     store.inputPage = canAccess("input_stock") ? "stock" : "sales";
     showToast(canAccess("input_stock") ? "Penjualan tersimpan. Lanjut isi stok." : "Penjualan tersimpan.", "success");
   } else {
-    store.inputPage = "stock";
-    showToast("Stok tersimpan. Laporan hari ini sudah diperbarui.", "success");
+    store.inputPage = submitType;
+    showToast(`${submitLabel} tersimpan untuk ${formatDate(today)}.`, "success");
   }
   render();
 }
@@ -2917,6 +2991,7 @@ function adjustTimerMinutes(id, delta) {
 }
 
 function updateTimers() {
+  if (hasAccessSession() && store.dbReady && !store.dbLoading && !store.submitLoading && !store.pendingWrites && (!isAccessAdmin() || !store.inputDate) && store.inputDraftDate && store.inputDraftDate !== inputRecordDate()) { syncInputDate(); render(); }
   let changed = false;
 
   store.timers.forEach((timer) => {
@@ -3279,8 +3354,9 @@ function getDraftValues(type) {
     }, {});
 }
 
-function isDraftLocked(type, date = isoDate(new Date())) {
-  const progressType = type === "refill" ? "stock" : type.startsWith("sales") ? "sales" : type;
+function isDraftLocked(type, date = inputRecordDate()) {
+  if (type === "refill") return isRefillSubmitted(date) && !store.dailyEditUnlocked.refill;
+  const progressType = type.startsWith("sales") ? "sales" : type;
   return Boolean(getDailyProgress(date)[progressType] && !store.dailyEditUnlocked[progressType]);
 }
 

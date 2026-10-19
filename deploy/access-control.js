@@ -7,6 +7,7 @@ const access = {
 };
 const ACCESS_RIGHTS = [
   ["input_stock", "Input stok", "inventory_2"], ["input_sales", "Input penjualan", "point_of_sale"],
+  ["input_refill", "Input refill stok", "inventory"],
   ["view_stock", "Lihat stok", "visibility"], ["view_sales", "Lihat penjualan", "receipt_long"],
 ];
 function isAccessAdmin() { return access.actor?.role === "admin"; }
@@ -49,6 +50,13 @@ async function loginAccess() {
     access.pin = "";
     store.adminUnlocked = isAccessAdmin();
     store.tenantResolved = false;
+    if (isAccessAdmin()) {
+      // A fresh admin login starts from the overview, including when the URL
+      // still points to the tenant or menu used before logging out.
+      store.adminView = "dashboard";
+      store.tenantSelection = "all";
+      history.replaceState({}, "", "/view?tenant=all");
+    }
     await initializeDatabase();
   } catch (error) {
     clearAccessSession(error.name === "TimeoutError" ? "Koneksi terlalu lama. Coba masuk lagi." : getErrorMessage(error));
@@ -66,6 +74,7 @@ function clearAccessSession(message = "") {
   store.tenants = []; store.tenantSelection = "";
   store.records = {}; store.pizzas = []; store.attendance = {}; store.dailyExpenses = {}; store.combinedTenants = [];
   store.inputDraft = { sales: {}, stock: {}, refill: {} }; store.dailySubmitted = {};
+  store.inputDate = ""; store.inputDraftDate = ""; store.inputDrafts = {};
   store.adminEdit = { type: null, date: null, values: {}, saving: false };
   store.staffForm = emptyStaffForm(); store.staffFormOpen = false;
   store.expenseForm = { note: "", amount: "" }; store.attendancePhotoPreview = null;
@@ -106,14 +115,13 @@ async function loadStaffWorkspace() {
     packSize: Number(pizza.pack_size) || 0, packPrice: Number(pizza.pack_price) || 0, image: pizza.image || PIZZA_IMAGES.veggie }));
   result.records.forEach((row) => {
     const stock = splitStockPayload(row.stock);
-    store.records[row.record_date] = { sales: splitSalesPayload(row.sales).total, salesDetail: row.sales_detail || {}, stock: stock.stock, refill: {} };
+    store.records[row.record_date] = { sales: splitSalesPayload(row.sales).total, salesDetail: row.sales_detail || {}, stock: stock.stock, refill: row.refill || stock.refill };
     store.dailySubmitted[row.record_date] = {
       sales: row.sales?.__submitted === true || Object.keys(store.records[row.record_date].sales).length > 0,
       stock: row.stock?.__submitted === true || Object.keys(stock.stock).length > 0,
     };
   });
-  const today = store.records[isoDate(new Date())];
-  if (today) { store.inputDraft.sales = { ...today.sales }; store.inputDraft.packs = salesPackCounts(today.salesDetail); store.inputDraft.stock = { ...today.stock }; }
+  resetInputDraftDates();
   ensureStaffPage();
 }
 
@@ -121,6 +129,7 @@ function staffPages() {
   return [
     ["sales", "input_sales", "point_of_sale", "Input penjualan"],
     ["stock", "input_stock", "inventory_2", "Input stok"],
+    ["refill", "input_refill", "inventory", "Refill stok"],
     ["timer", "timer", "timer", "Timer"],
     ["view_sales", "view_sales", "receipt_long", "Lihat penjualan"],
     ["view_stock", "view_stock", "visibility", "Lihat stok"],
@@ -131,13 +140,14 @@ function ensureStaffPage() {
   if (!pages.some(([page]) => page === store.inputPage)) store.inputPage = pages[0]?.[0] || "none";
 }
 function renderStaffPortal() {
-  if (store.dbLoading || store.tenantError || !store.tenantResolved) return `<main class="main narrow">${store.tenants.length ? renderTenantSelector() : ""}<section class="panel stack"><p role="status">${escapeHtml(store.tenantError || "Memuat akses staff...")}</p>${store.tenantError ? '<button class="btn secondary" data-retry-tenant>Coba lagi</button>' : ""}</section></main>`;
+  if (store.dbLoading || store.tenantError || !store.tenantResolved) return `<main class="main narrow">${store.tenantResolved && store.tenants.length ? renderTenantSelector() : ""}${store.tenantResolved ? `<nav class="input-tabs access-nav" aria-label="Menu staff">${staffPages().map(([page,,icon,label]) => inputPageButton(page,icon,label)).join("")}</nav>` : ""}${store.tenantError ? `<section class="panel stack"><p role="alert">${escapeHtml(store.tenantError)}</p><button class="btn secondary" data-retry-tenant>Coba lagi</button></section>` : renderTenantLoading()}</main>`;
   ensureStaffPage();
   const pages = staffPages();
-  const write = store.inputPage === "sales" || store.inputPage === "stock";
+  const write = ["sales", "stock", "refill"].includes(store.inputPage);
   let body = "";
   if (store.inputPage === "sales") body = renderInputSales(store.pizzas.filter((pizza) => pizza.active));
   else if (store.inputPage === "stock") body = renderInputStock(store.pizzas.filter((pizza) => pizza.active));
+  else if (store.inputPage === "refill") body = renderInputRefill(store.pizzas.filter((pizza) => pizza.active));
   else if (store.inputPage === "timer") body = renderInputTimers();
   else if (store.inputPage.startsWith("view_")) body = renderStaffReadOnly(store.inputPage === "view_sales" ? "sales" : "stock");
   else body = '<section class="panel tenant-empty-state"><h3>Belum ada hak akses</h3><p>Hubungi admin untuk mengatur hak akses Anda.</p></section>';
@@ -151,8 +161,11 @@ function renderStaffReadOnly(kind) {
   const totals = store.pizzas.map((pizza) => ({ pizza, qty: chosen.reduce((sum,date) => sum + (Number(store.records[date]?.[kind]?.[pizza.id]) || 0),0) }));
   const total = totals.reduce((sum,item) => sum+item.qty,0);
   return `<section class="panel viewer-filter-panel stack access-read-filter"><div class="segmented" role="tablist" aria-label="Filter tanggal staff">${viewerFilterButton("today","Hari Ini")}${viewerFilterButton("yesterday","Kemarin")}${viewerFilterButton("custom","Custom")}</div>${store.viewerFilter === "custom" ? renderCalendarRange() : ""}</section>
-    ${hasData ? `<section class="panel access-read-report"><div class="access-read-heading"><div><span class="access-eyebrow">HANYA LIHAT</span><h3>${kind === "sales" ? "Penjualan" : "Stok pizza"}</h3><p>${escapeHtml(tenantLabel())} · ${ticketDateDescription(chosen)}</p></div><strong>${total}<small> slice</small></strong></div>
-    ${totals.map(({pizza,qty}) => `<div class="access-read-row"><span>${escapeHtml(pizza.name)}</span><strong>${qty}<small> slice</small></strong></div>`).join("")}</section>` : renderTenantEmptyState(chosen,kind)}`;
+    ${hasData ? `<section class="panel access-read-report" aria-label="${kind === "sales" ? "Ringkasan penjualan" : "Ringkasan stok pizza"}">
+      <header class="access-read-heading"><div class="access-read-title"><span class="access-read-icon material-symbols-outlined" aria-hidden="true">${kind === "sales" ? "point_of_sale" : "inventory_2"}</span><div><span class="access-eyebrow">HANYA LIHAT</span><h3>${kind === "sales" ? "Penjualan" : "Stok pizza"}</h3></div></div><div class="access-read-total"><strong>${total}</strong><span>slice</span></div></header>
+      <div class="access-read-meta"><span><span class="material-symbols-outlined" aria-hidden="true">storefront</span>${escapeHtml(tenantLabel())}</span><span><span class="material-symbols-outlined" aria-hidden="true">calendar_today</span>${ticketDateDescription(chosen)}</span></div>
+      <div class="access-read-list">${totals.map(({pizza,qty}) => `<div class="access-read-row"><span class="access-read-product-icon" aria-hidden="true">${escapeHtml(getInitials(pizza.name))}</span><span class="access-read-product-name">${escapeHtml(pizza.name)}</span><span class="access-read-quantity ${qty === 0 ? "is-zero" : ""}"><strong>${qty}</strong><small>slice</small></span></div>`).join("")}</div>
+    </section>` : renderTenantEmptyState(chosen,kind)}`;
 }
 
 async function loadAccessAccounts() {
@@ -169,7 +182,7 @@ function renderAccessManagement() {
     <div class="staff-heading"><div><h3>Kelola Staff <span class="access-staff-count">${staff.length}</span></h3><p>PIN dan akses setiap tenant.</p></div><button class="btn staff-add-btn" type="button" data-access-new ${access.saving ? "disabled" : ""}>+ Staff</button></div>
     <div class="access-admin-note"><span class="material-symbols-outlined" aria-hidden="true">verified_user</span><span>Admin memiliki akses penuh.</span></div>
     ${access.formOpen ? renderAccessForm() : ""}
-    ${access.accountsLoading ? '<p class="muted" role="status">Memuat akun staff...</p>' : ""}
+    ${access.accountsLoading ? renderTenantLoading("Memuat staff", "Menyiapkan daftar dan hak akses", true) : ""}
     ${access.accountsError ? `<p class="tenant-error" role="alert">${escapeHtml(access.accountsError)}</p>` : ""}
     <div class="access-account-list">${staff.map(account => `<article class="access-account-card">
       <div class="access-account-heading"><span class="pizza-initial">${escapeHtml(getInitials(account.name))}</span><h4>${escapeHtml(account.name)}</h4><span class="chip ${account.active && account.pin_set ? "green" : "gray"}">${!account.pin_set ? "Belum ada PIN" : account.active ? "Aktif" : "Nonaktif"}</span><button class="access-account-edit" type="button" data-access-edit="${escapeHtml(account.id)}" aria-label="${account.pin_set ? 'Edit' : 'Atur'} PIN dan akses ${escapeHtml(account.name)}" ${access.saving ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">edit</span></button></div>
@@ -185,7 +198,7 @@ function renderAccessForm() {
     <label>PIN staff<input data-access-field="pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6" placeholder="4–6 angka${access.accounts.some((a)=>a.id===form.id && a.pin_set) ? " · kosongkan jika tetap" : ""}" value="${escapeHtml(form.pin)}" /></label>
     <label class="access-check access-timer-check"><input type="checkbox" data-access-timer ${form.timer ? "checked" : ""} /><span class="material-symbols-outlined" aria-hidden="true">timer</span><span>Timer</span></label>
     <div class="access-permission-list">${store.tenants.map((tenant) => `<fieldset class="access-permission-card"><legend>${escapeHtml(tenantLabel(tenant))}</legend><div>${ACCESS_RIGHTS.map(([key,label,icon]) => `<label class="access-check"><input type="checkbox" data-access-right="${key}" data-access-tenant="${escapeHtml(tenant.id)}" ${form.permissions[tenant.id]?.[key] ? "checked" : ""} /><span class="material-symbols-outlined" aria-hidden="true">${icon}</span><span>${label}</span></label>`).join("")}</div></fieldset>`).join("")}</div>
-    <p class="muted">Hak input berlaku untuk data hari ini. Hak lihat membuka riwayat tanpa tombol ubah data. PIN harus berbeda untuk setiap akun.</p>
+    <p class="muted">Hak input mengikuti tanggal yang dipilih. Hak lihat membuka riwayat tanpa tombol ubah data. PIN harus berbeda untuk setiap akun.</p>
     <div class="staff-actions"><button class="btn" type="submit" ${access.saving ? "disabled" : ""}>${access.saving ? "Menyimpan..." : "Simpan staff"}</button><button class="btn secondary" type="button" data-access-cancel ${access.saving ? "disabled" : ""}>Batal</button></div>
   </form>`;
 }

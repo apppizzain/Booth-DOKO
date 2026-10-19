@@ -379,6 +379,52 @@ a {
   font-size: 21px;
 }
 
+.input-date-panel { display: flex; align-items: center; gap: 10px; padding: 11px 13px; margin: 0 0 14px; background: linear-gradient(115deg, #fff, #fff6f7); }
+.input-date-icon { color: var(--red); background: var(--red-soft); border-radius: 10px; padding: 9px; font-size: 21px; flex: 0 0 auto; }
+.input-date-field { display: grid; flex: 1; min-width: 0; gap: 4px; }
+.input-date-field > span { display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 700; color: var(--muted); }
+.input-date-field small { font-size: 9px; background: var(--red-soft); color: var(--red-deep); border-radius: 99px; padding: 2px 6px; }
+.input-date-field input { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 30px; padding: 3px 6px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; font-weight: 700; color: var(--red-deep); }
+.input-date-field input:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.input-date-today { background: var(--red-soft); color: var(--red-deep); border-radius: 7px; font-size: 10px; font-weight: 700; padding: 10px; flex: 0 0 auto; }
+
+.tenant-loading {
+  align-items: center;
+  background: linear-gradient(115deg, #fff 0%, #fff6f7 100%);
+  border: 1px solid rgba(201, 21, 47, 0.16);
+  display: flex;
+  gap: 13px;
+  min-height: 98px;
+  padding: 20px;
+}
+.tenant-loading-mark {
+  align-items: center;
+  background: var(--red-soft);
+  border-radius: 13px;
+  display: inline-flex;
+  flex: 0 0 42px;
+  height: 42px;
+  justify-content: center;
+}
+.tenant-loading-ring {
+  animation: spin 0.9s linear infinite;
+  border: 2.5px solid rgba(201, 21, 47, 0.16);
+  border-top-color: var(--red);
+  border-right-color: var(--red);
+  border-radius: 50%;
+  height: 23px;
+  width: 23px;
+}
+.tenant-loading-copy { min-width: 0; }
+.tenant-loading-copy h3 { color: var(--red-deep); font: 600 17px Fredoka, Manrope, sans-serif; margin: 0; }
+.tenant-loading-copy p { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 4px 0 0; overflow-wrap: anywhere; }
+.tenant-loading-inline { border-radius: var(--radius); min-height: 76px; padding: 12px; }
+.tenant-loading-inline .tenant-loading-mark { flex-basis: 34px; height: 34px; border-radius: 10px; }
+.tenant-loading-inline h3 { font-size: 15px; }
+@media (prefers-reduced-motion: reduce) {
+  .tenant-loading-ring { animation: none; }
+}
+
 .tenant-selector-panel {
   background: linear-gradient(135deg, #fff 0%, #fff3f5 100%);
   border-color: rgba(201, 21, 47, 0.18);
@@ -629,6 +675,12 @@ a {
 .input-tabs.access-admin-tabs { grid-template-columns: repeat(5,minmax(0,1fr)); }
 .access-admin-tabs button { font-size: 10px; padding-left: 2px; padding-right: 2px; }
 .access-nav { grid-template-columns: repeat(auto-fit,minmax(84px,1fr)); margin-bottom: 14px; }
+.input-tabs-with-refill { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.input-refill-panel { background: #fff7f8; border-color: #edbcc6; }
+.input-refill-panel .stock-compact-title h3 { color: #fff; }
+.input-refill-note { color: var(--muted); font-size: 10px; line-height: 1.6; margin: 9px 3px 2px; }
+.refill-slice-caption { color: var(--muted); display: block; font-size: 10px; font-weight: 500; margin-top: 4px; }
+.input-refill-panel .counter { grid-template-columns: 23px minmax(35px,auto) 23px; }
 .access-nav button { font-size: 10px; line-height: 1.4; }
 .access-management { padding: 12px; gap: 10px; }
 .access-management h3 { align-items: center; display: flex; gap: 7px; color: var(--red-deep); font-family: Fredoka, Manrope, system-ui, sans-serif; font-size: 18px; }
@@ -695,15 +747,35 @@ a {
 .tenant-choice-copy small { color: var(--muted); font-size: 10px; }
 .tenant-choice-row > .material-symbols-outlined { color: #c17b8b; font-size: 19px; }
 .access-read-filter { margin-bottom: 12px; }
-.access-read-report { border-color: #edc8d0; overflow: hidden; padding: 0; }
-.access-read-heading { align-items: center; background: #fff0f3; display: flex; gap: 10px; justify-content: space-between; padding: 15px; }
-.access-read-heading h3 { color: var(--red-deep); font-family: Fredoka, Manrope, system-ui, sans-serif; font-size: 21px; margin: 4px 0; }
-.access-read-heading p { color: var(--muted); font-size: 10px; line-height: 1.6; margin: 0; }
-.access-eyebrow { color: #b06072; font-size: 9px; font-weight: 800; letter-spacing: 1px; }
-.access-read-heading > strong { color: var(--red); font-size: 24px; white-space: nowrap; }
-.access-read-heading small,.access-read-row small { font-size: 10px; font-weight: 600; }
-.access-read-row { align-items: center; border-top: 1px solid #f2e5e5; display: flex; font-size: 12px; gap: 12px; justify-content: space-between; padding: 14px 15px; }
-.access-read-row strong { color: var(--red-deep); white-space: nowrap; }
+.access-read-report { background: linear-gradient(150deg,#fff 50%,#fff7f8); border: 1px solid #edc8d0; border-radius: 14px; overflow: hidden; padding: 9px; box-shadow: 0 8px 26px rgba(135,24,47,.045); }
+.access-read-heading { align-items: center; background: linear-gradient(115deg,#bd102c,#e73750); border-radius: 10px; display: flex; gap: 12px; justify-content: space-between; min-height: 86px; padding: 14px; color: #fff; }
+.access-read-title { align-items: center; display: flex; gap: 10px; min-width: 0; }
+.access-read-icon { align-items: center; background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.14); border-radius: 11px; display: inline-flex; flex: 0 0 39px; height: 39px; justify-content: center; font-size: 24px; }
+.access-read-heading h3 { color: #fff; font: 600 21px/1.15 Fredoka,Manrope,system-ui,sans-serif; margin: 4px 0 0; }
+.access-eyebrow { color: #ffe1e6; display: block; font-size: 8px; font-weight: 700; letter-spacing: 1px; }
+.access-read-total { align-items: center; display: flex; flex: 0 0 auto; gap: 5px; padding-left: 12px; border-left: 1px solid rgba(255,255,255,.24); }
+.access-read-total strong { color: #fff; font: 600 32px/1 Fredoka,Manrope,system-ui,sans-serif; font-variant-numeric: tabular-nums; }
+.access-read-total > span { color: #ffe4e9; font-size: 10px; font-weight: 600; }
+.access-read-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; padding: 11px 4px; }
+.access-read-meta > span { align-items: center; color: var(--muted); display: inline-flex; font-size: 10px; gap: 5px; line-height: 1.6; min-width: 0; overflow-wrap: anywhere; }
+.access-read-meta .material-symbols-outlined { color: #b77684; font-size: 14px; flex: 0 0 auto; }
+.access-read-list { display: grid; gap: 6px; }
+.access-read-row { align-items: center; background: #fff; border: 1px solid #f1e0e3; border-radius: 9px; display: flex; gap: 9px; min-height: 56px; padding: 9px; }
+.access-read-product-icon { align-items: center; background: #fff1f4; border-radius: 8px; color: #b32b44; display: inline-flex; flex: 0 0 30px; height: 30px; justify-content: center; font-size: 10px; font-weight: 800; }
+.access-read-product-name { color: var(--ink); flex: 1; font-size: 12px; font-weight: 600; line-height: 1.5; min-width: 0; overflow-wrap: anywhere; }
+.access-read-quantity { align-items: baseline; background: #fff0f3; border: 1px solid #ffe1e7; border-radius: 8px; color: var(--red-deep); display: inline-flex; flex: 0 0 auto; gap: 4px; justify-content: center; min-width: 63px; padding: 7px 9px; }
+.access-read-quantity strong { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.access-read-quantity small { font-size: 9px; font-weight: 500; }
+.access-read-quantity.is-zero { background: #f8f4f4; border-color: #f1e9e9; color: #9c8587; }
+@media (max-width: 350px) {
+  .access-read-heading { gap: 8px; padding: 12px; }
+  .access-read-icon { flex-basis: 32px; height: 32px; font-size: 21px; }
+  .access-read-heading h3 { font-size: 19px; }
+  .access-read-total { gap: 3px; padding-left: 8px; }
+  .access-read-total strong { font-size: 28px; }
+  .access-read-row { gap: 7px; padding: 8px; }
+  .access-read-quantity { min-width: 58px; padding: 7px; }
+}
 .brand > span:last-child { min-width: 0; }
 .topbar .brand p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
