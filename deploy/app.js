@@ -9,13 +9,9 @@ const PIZZA_IMAGES = {
     "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=500&q=80",
 };
 
-const DEFAULT_ADMIN_PIN = "0000";
 const SUPABASE_URL = "https://qipqhopjbwjquschrggt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFpcHFob3BqYndqcXVzY2hyZ2d0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NjQ1MDYsImV4cCI6MjA5NzQ0MDUwNn0._LAfxDUc7JDb8SfGjL-XwoeC2ECbrJvDoEKx4_iTuH0";
 const DOKO_APP_ID = "pizzain_doko_v1";
-const GAS_PHOTO_UPLOAD_URL = "https://script.google.com/macros/s/AKfycbyiQGAfG_AJSwMAaGTwsl1G5CiYmgKgBXyOuji9nsG4VOJ5hegolFL_bdroypwc8cT1AQ/exec";
-const ATTENDANCE_SETTINGS_KEY = `${DOKO_APP_ID}:attendance_settings`;
-const DAILY_EXPENSES_KEY = `${DOKO_APP_ID}:daily_expenses`;
 const REFILL_STOCK_PREFIX = "__refill__";
 const SALES_SHIFT_1_PREFIX = "__shift1__";
 const SALES_SHIFT_2_PREFIX = "__shift2__";
@@ -26,19 +22,35 @@ const DEFAULT_ATTENDANCE_SETTINGS = {
 };
 
 const store = {
+  tenants: [{ ...DEFAULT_TENANT }, { ...INITIAL_NEW_TENANT }],
+  tenantsReady: false,
+  tenantsError: "",
+  tenantResolved: false,
+  tenantSelection: DEFAULT_TENANT.id,
+  tenantError: "",
+  pendingWrites: 0,
+  combinedTenants: [],
+  staffForm: emptyStaffForm(),
+  editingStaffId: null,
+  newStaffId: null,
+  staffSaving: false,
+  staffFormOpen: false,
+  staffError: "",
   ownerFee: 2000,
-  adminView: "dashboard",
+  ownerFeeMode: "fixed",
+  ownerFeePercent: 0,
+  ownerFeeDraft: null,
+  adminView: normalizeRoute(location.pathname) === "/view" ? "reports" : "dashboard",
   adminQuickPanel: null,
   reportView: "tenant",
   attendanceFilter: "in",
   adminUnlocked: false,
-  adminPin: DEFAULT_ADMIN_PIN,
   adminPinInput: "",
   adminPasswordForm: {
     pin: "",
   },
   attendanceSettings: { ...DEFAULT_ATTENDANCE_SETTINGS },
-  inputPage: "attendance",
+  inputPage: "sales",
   viewerFilter: "today",
   rangeStart: isoDate(new Date()),
   rangeEnd: isoDate(new Date()),
@@ -54,10 +66,6 @@ const store = {
   pizzaFormOpen: false,
   deleteConfirmPizzaId: null,
   deleteConfirmExpense: null,
-  attendanceMode: null,
-  cameraStream: null,
-  cameraFacing: "user",
-  capturedPhoto: null,
   attendancePhotoPreview: null,
   pizzaForm: {
     name: "",
@@ -67,8 +75,6 @@ const store = {
   },
   inputDraft: {
     sales: {},
-    salesShift1: {},
-    salesShift2: {},
     refill: {},
     stock: {},
   },
@@ -169,6 +175,10 @@ if (window.visualViewport) {
 }
 document.addEventListener("pointerdown", unlockTimerAudio, { once: true });
 document.addEventListener("click", handleClick);
+document.addEventListener("submit", (event) => {
+  if (event.target.matches("[data-access-form]")) { event.preventDefault(); saveAccessAccount(); return; }
+  if (event.target.matches("[data-staff-form]")) { event.preventDefault(); saveStaff(); }
+});
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
 document.addEventListener("keydown", handleKeydown);
@@ -177,8 +187,6 @@ document.addEventListener("focusout", handleFocusOut);
 setInterval(updateTimers, 1000);
 
 updateVisibleViewport();
-loadAttendanceSettings();
-loadDailyExpenses();
 render();
 initializeDatabase();
 
@@ -190,44 +198,70 @@ function updateVisibleViewport() {
   document.documentElement.style.setProperty("--visible-top", `${Math.round(top)}px`);
 }
 
-async function initializeDatabase() {
+async function initializeDatabase(reloadProfiles = true) {
+  if (!hasAccessSession()) { render(); return; }
+  const generation = access.generation;
   store.dbLoading = true;
+  store.dbReady = false;
   store.dbError = "";
+  store.tenantError = "";
   if (!isLockedAdminPinRoute()) render();
-
   try {
-    await loadRemoteData();
+    if (reloadProfiles) {
+      await loadTenantProfiles();
+    }
+    if (isAccessStaff()) {
+      await loadStaffWorkspace();
+    } else if (isAllTenants()) {
+      await loadCombinedTenants();
+    } else {
+      loadAttendanceSettings();
+      loadDailyExpenses();
+      await loadRemoteData();
+      if (!isInputRoute() && store.adminView === "attendance") {
+        await loadRemoteAttendanceHistory();
+      } else if (!isInputRoute() && store.adminView === "settings") {
+        await loadRemoteAttendanceSettings();
+      }
+    }
+    if (isAccessAdmin() && store.adminView === "staff") await loadAccessAccounts();
+    if (generation !== access.generation) return;
     store.dbReady = true;
   } catch (error) {
-    store.dbReady = false;
+    if (generation !== access.generation) return;
     store.dbError = getErrorMessage(error);
+    store.tenantError = store.dbError;
     console.error("Supabase sync failed", error);
-    showToast("Database belum siap. Jalankan schema DOKO dulu.", "error");
   } finally {
-    store.dbLoading = false;
-    if (!isLockedAdminPinRoute()) render();
+    if (generation === access.generation) {
+      store.dbLoading = false;
+      if (!isLockedAdminPinRoute()) render();
+    }
   }
 }
 
 function isLockedAdminPinRoute() {
-  return normalizeRoute(location.pathname) === "/admin" && !store.adminUnlocked;
+  return !hasAccessSession();
 }
 
 async function loadRemoteData() {
-  const [settingsRows, pizzaRows, recordRows, attendanceRows] = await Promise.all([
-    dbSelect("doko_settings", `app_id=eq.${DOKO_APP_ID}&select=owner_fee&limit=1`),
-    dbSelect("doko_pizzas", `app_id=eq.${DOKO_APP_ID}&select=id,name,cost,price,active,image,sort_order&order=sort_order.asc`),
-    dbSelect("doko_daily_records", `app_id=eq.${DOKO_APP_ID}&select=record_date,sales,stock,submitted_at&order=record_date.desc`),
-    dbSelect("doko_attendance", `app_id=eq.${DOKO_APP_ID}&select=record_date,in_record,out_record&order=record_date.desc`),
+  const generation = access.generation;
+  const [settingsRows, pizzaRows, recordRows, remoteExpenses] = await Promise.all([
+    dbSelect("doko_settings", `app_id=eq.${dataAppId()}&select=owner_fee,owner_fee_mode,owner_fee_percent&limit=1`),
+    dbSelect("doko_pizzas", `app_id=eq.${dataAppId()}&select=id,name,cost,price,pack_size,pack_price,active,image,sort_order&order=sort_order.asc`),
+    dbSelect("doko_daily_records", `app_id=eq.${dataAppId()}&select=record_date,sales,sales_detail,stock,submitted_at&order=record_date.desc`),
+    loadRemoteDailyExpenses(),
   ]);
+  if (generation !== access.generation) throw Error("Sesi telah berubah.");
 
   if (settingsRows[0]) {
-    store.ownerFee = Number(settingsRows[0].owner_fee) || store.ownerFee;
+    store.ownerFee = Number(settingsRows[0].owner_fee ?? 2000);
+    store.ownerFeeMode = settingsRows[0].owner_fee_mode === "percent" ? "percent" : "fixed";
+    store.ownerFeePercent = Number(settingsRows[0].owner_fee_percent ?? 0);
+    store.ownerFeeDraft = null;
   } else {
-    await dbUpsertSetting(store.ownerFee);
+    throw new Error("Pengaturan tenant belum tersedia. Minta admin menyelesaikan penyiapan tenant.");
   }
-  await loadAdminPinSetting();
-  await loadRemoteAttendanceSettings();
 
   if (pizzaRows.length) {
     store.pizzas = pizzaRows.map((row) => ({
@@ -235,22 +269,24 @@ async function loadRemoteData() {
       name: row.name,
       cost: Number(row.cost) || 0,
       price: Number(row.price) || 0,
+      packSize: Number(row.pack_size) || 0,
+      packPrice: Number(row.pack_price) || 0,
       active: Boolean(row.active),
       image: row.image || PIZZA_IMAGES.veggie,
     }));
   } else {
-    await dbUpsertPizzas(store.pizzas);
+    store.pizzas = [];
   }
 
   store.records = {};
   store.dailySubmitted = {};
+  store.inputDraft = { sales: {}, refill: {}, stock: {} };
   recordRows.forEach((row) => {
     const stockParts = splitStockPayload(row.stock);
     const salesParts = splitSalesPayload(row.sales);
     store.records[row.record_date] = {
       sales: salesParts.total,
-      salesShift1: salesParts.shift1,
-      salesShift2: salesParts.shift2,
+      salesDetail: row.sales_detail || {},
       refill: stockParts.refill,
       stock: stockParts.stock,
     };
@@ -258,45 +294,31 @@ async function loadRemoteData() {
   });
 
   store.attendance = {};
-  attendanceRows.forEach((row) => {
-    store.attendance[row.record_date] = {
-      in: row.in_record || null,
-      out: row.out_record || null,
-    };
-  });
 
   const today = isoDate(new Date());
   if (!store.attendance[today]) store.attendance[today] = { in: null, out: null };
   if (store.records[today]) {
     store.inputDraft.sales = { ...store.records[today].sales };
-    store.inputDraft.salesShift1 = { ...(store.records[today].salesShift1 || store.records[today].sales || {}) };
-    store.inputDraft.salesShift2 = { ...(store.records[today].salesShift2 || {}) };
+    store.inputDraft.packs = salesPackCounts(store.records[today].salesDetail);
     store.inputDraft.refill = { ...(store.records[today].refill || {}) };
     store.inputDraft.stock = { ...store.records[today].stock };
   }
-  await loadRemoteDailyExpenses();
+  store.dailyExpenses = normalizeDailyExpenses({ ...store.dailyExpenses, ...remoteExpenses });
+  saveLocalDailyExpenses();
+  syncLocalDailyExpensesToRemote(remoteExpenses);
 }
 
 async function dbSelect(table, query) {
   return dbRequest(`${table}?${query}`);
 }
 
-async function loadAdminPinSetting() {
-  try {
-    const rows = await dbSelect("doko_settings", `app_id=eq.${DOKO_APP_ID}&select=admin_pin&limit=1`);
-    const pin = String(rows?.[0]?.admin_pin || "").replace(/\D/g, "").slice(0, 4);
-    if (pin.length === 4) store.adminPin = pin;
-  } catch (error) {
-    console.warn("Admin PIN column is not ready yet", error);
-    store.adminPin = DEFAULT_ADMIN_PIN;
-  }
-}
+
 
 async function loadRemoteAttendanceSettings() {
   try {
     const rows = await dbSelect(
       "doko_settings",
-      `app_id=eq.${DOKO_APP_ID}&select=attendance_check_in,attendance_check_out,attendance_tolerance_minutes&limit=1`
+      `app_id=eq.${dataAppId()}&select=attendance_check_in,attendance_check_out,attendance_tolerance_minutes&limit=1`
     );
     if (!rows?.[0]) return;
     store.attendanceSettings = normalizeAttendanceSettings({
@@ -310,11 +332,19 @@ async function loadRemoteAttendanceSettings() {
   }
 }
 
+async function loadRemoteAttendanceHistory() {
+  const [rows] = await Promise.all([
+    dbSelect("doko_attendance", `app_id=eq.${dataAppId()}&select=record_date,in_record,out_record&order=record_date.desc`),
+    loadRemoteAttendanceSettings(),
+  ]);
+  store.attendance = Object.fromEntries(rows.map((row) => [row.record_date, { in: row.in_record || null, out: row.out_record || null }]));
+}
+
 async function loadRemoteDailyExpenses() {
   try {
     const rows = await dbSelect(
       "doko_daily_expenses",
-      `app_id=eq.${DOKO_APP_ID}&select=id,record_date,note,amount,created_at&order=record_date.desc,created_at.desc`
+      `app_id=eq.${dataAppId()}&select=id,record_date,note,amount,created_at&order=record_date.desc,created_at.desc`
     );
     const remoteExpenses = rows.reduce((itemsByDate, row) => {
       const date = row.record_date;
@@ -327,14 +357,10 @@ async function loadRemoteDailyExpenses() {
       });
       return itemsByDate;
     }, {});
-    store.dailyExpenses = normalizeDailyExpenses({
-      ...store.dailyExpenses,
-      ...remoteExpenses,
-    });
-    saveLocalDailyExpenses();
-    syncLocalDailyExpensesToRemote(remoteExpenses);
+    return remoteExpenses;
   } catch (error) {
     console.warn("Daily expenses table is not ready yet", error);
+    throw error;
   }
 }
 
@@ -356,11 +382,17 @@ async function dbUpsert(table, row, conflictColumns) {
 }
 
 async function dbRequest(path, options = {}) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+  const generation = access.generation;
+  const controller = new AbortController();
+  const readOnlyRpc = /^rpc\/doko_access_(me|list|workspace)$/.test(path);
+  const timeout = setTimeout(() => controller.abort(), options.method && options.method !== "GET" && !readOnlyRpc ? 20000 : 8000);
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    signal: controller.signal,
     method: options.method || "GET",
     headers: {
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${await accessToken()}`,
       "Content-Type": "application/json",
       ...(options.prefer ? { Prefer: options.prefer } : {}),
     },
@@ -369,33 +401,35 @@ async function dbRequest(path, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Database error ${response.status}`);
+    if (generation === access.generation && (response.status === 401 || (response.status === 403 && text.includes("Sesi berakhir")))) clearAccessSession("Sesi berakhir. Masukkan PIN kembali.");
+    let message = text;
+    try { message = JSON.parse(text).message || text; } catch {}
+    throw new Error(message || `Database error ${response.status}`);
   }
 
   if (response.status === 204) return null;
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("Koneksi terlalu lama. Periksa internet lalu coba lagi.");
+    if (error instanceof TypeError) throw new Error("Data belum berhasil dimuat. Periksa koneksi internet lalu coba lagi.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-async function dbUpsertSetting(ownerFee) {
+async function dbUpsertSetting(fee) {
   return dbUpsert(
     "doko_settings",
-    { app_id: DOKO_APP_ID, owner_fee: ownerFee, updated_at: new Date().toISOString() },
+    { app_id: dataAppId(), owner_fee: fee.ownerFee, owner_fee_mode: fee.ownerFeeMode,
+      owner_fee_percent: fee.ownerFeePercent, updated_at: new Date().toISOString() },
     "app_id"
   );
 }
 
 async function dbUpsertAdminPin(pin) {
-  return dbUpsert(
-    "doko_settings",
-    {
-      app_id: DOKO_APP_ID,
-      owner_fee: store.ownerFee,
-      admin_pin: pin,
-      updated_at: new Date().toISOString(),
-    },
-    "app_id"
-  );
+  return dbRequest("rpc/doko_access_admin_pin", { method: "POST", body: { p_pin: pin } });
 }
 
 async function dbUpsertAttendanceSettings(settings) {
@@ -403,8 +437,7 @@ async function dbUpsertAttendanceSettings(settings) {
   return dbUpsert(
     "doko_settings",
     {
-      app_id: DOKO_APP_ID,
-      owner_fee: store.ownerFee,
+      app_id: dataAppId(),
       attendance_check_in: next.checkIn,
       attendance_check_out: next.checkOut,
       attendance_tolerance_minutes: next.toleranceMinutes,
@@ -418,11 +451,13 @@ async function dbUpsertPizza(pizza, sortOrder = store.pizzas.findIndex((item) =>
   return dbUpsert(
     "doko_pizzas",
     {
-      app_id: DOKO_APP_ID,
+      app_id: dataAppId(),
       id: pizza.id,
       name: pizza.name,
       cost: pizza.cost,
       price: pizza.price,
+      pack_size: pizza.packSize || 0,
+      pack_price: pizza.packPrice || 0,
       active: pizza.active,
       image: pizza.image || PIZZA_IMAGES.veggie,
       sort_order: Math.max(0, sortOrder),
@@ -437,11 +472,13 @@ async function dbUpsertPizzas(pizzas) {
   return dbRequest("doko_pizzas?on_conflict=app_id,id", {
     method: "POST",
     body: pizzas.map((pizza, index) => ({
-      app_id: DOKO_APP_ID,
+      app_id: dataAppId(),
       id: pizza.id,
       name: pizza.name,
       cost: pizza.cost,
       price: pizza.price,
+      pack_size: pizza.packSize || 0,
+      pack_price: pizza.packPrice || 0,
       active: pizza.active,
       image: pizza.image || PIZZA_IMAGES.veggie,
       sort_order: index,
@@ -451,7 +488,7 @@ async function dbUpsertPizzas(pizzas) {
   });
 }
 async function dbDeletePizza(id) {
-  return dbRequest(`doko_pizzas?app_id=eq.${DOKO_APP_ID}&id=eq.${encodeURIComponent(id)}`, {
+  return dbRequest(`doko_pizzas?app_id=eq.${dataAppId()}&id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",
     prefer: "return=minimal",
   });
@@ -461,7 +498,7 @@ async function dbUpsertDailyExpense(date, expense) {
   return dbUpsert(
     "doko_daily_expenses",
     {
-      app_id: DOKO_APP_ID,
+      app_id: dataAppId(),
       id: expense.id,
       record_date: date,
       note: expense.note,
@@ -474,21 +511,30 @@ async function dbUpsertDailyExpense(date, expense) {
 }
 
 async function dbDeleteDailyExpense(id) {
-  return dbRequest(`doko_daily_expenses?app_id=eq.${DOKO_APP_ID}&id=eq.${encodeURIComponent(id)}`, {
+  return dbRequest(`doko_daily_expenses?app_id=eq.${dataAppId()}&id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",
     prefer: "return=minimal",
   });
 }
 
-async function dbUpsertDailyRecord(date) {
+async function dbUpsertDailyRecord(date, type) {
   const record = store.records[date] || { sales: {}, refill: {}, stock: {} };
+  if (isAccessStaff()) {
+    if (!["sales","stock"].includes(type) || !canAccess(type === "sales" ? "input_sales" : "input_stock")) throw Error("Anda tidak memiliki hak input ini.");
+    const values = cleanDailyValues(record[type]);
+    if (type === "sales") Object.entries(record.salesDetail || {}).forEach(([id, detail]) => {
+      if (Object.hasOwn(values, id)) values[`__loyang__${id}`] = detail.packs || 0;
+    });
+    return dbRequest("rpc/doko_access_submit", { method: "POST", body: { p_tenant_id: currentTenant.id, p_type: type, p_date: date, p_values: values } });
+  }
   const progress = getDailyProgress(date);
   return dbUpsert(
     "doko_daily_records",
     {
-      app_id: DOKO_APP_ID,
+      app_id: dataAppId(),
       record_date: date,
-      sales: withSubmittedFlag(packSalesPayload(record.salesShift1, record.salesShift2, record.sales), progress.sales),
+      sales: withSubmittedFlag(record.sales, progress.sales),
+      sales_detail: record.salesDetail || {},
       stock: withSubmittedFlag(packStockPayload(record.stock, record.refill), progress.stock),
       submitted_at: new Date().toISOString(),
     },
@@ -496,20 +542,6 @@ async function dbUpsertDailyRecord(date) {
   );
 }
 
-async function dbUpsertAttendance(date) {
-  const record = store.attendance[date] || { in: null, out: null };
-  return dbUpsert(
-    "doko_attendance",
-    {
-      app_id: DOKO_APP_ID,
-      record_date: date,
-      in_record: record.in,
-      out_record: record.out,
-      updated_at: new Date().toISOString(),
-    },
-    "app_id,record_date"
-  );
-}
 
 function cleanDailyValues(values) {
   return Object.fromEntries(
@@ -524,6 +556,7 @@ function cleanDailyValues(values) {
 }
 
 function splitSalesPayload(values) {
+  // Read legacy split rows as one total; never add their cached total twice.
   const total = {};
   const shift1 = {};
   const shift2 = {};
@@ -552,29 +585,17 @@ function splitSalesPayload(values) {
   });
 
   if (!hasShiftValues) {
-    return { total, shift1, shift2: { ...total } };
+    return { total };
   }
 
-  store.pizzas.forEach((pizza) => {
-    total[pizza.id] = (Number(shift1[pizza.id]) || 0) + (Number(shift2[pizza.id]) || 0);
+  new Set([...Object.keys(shift1), ...Object.keys(shift2)]).forEach((id) => {
+    total[id] = (Number(shift1[id]) || 0) + (Number(shift2[id]) || 0);
   });
 
-  return { total, shift1, shift2 };
+  return { total };
 }
 
-function packSalesPayload(shift1 = {}, shift2 = {}, fallbackTotal = {}) {
-  const combined = getCombinedSalesValues(shift1, shift2, fallbackTotal);
-  const packed = { ...combined };
-  store.pizzas.forEach((pizza) => {
-    packed[salesShiftKey(1, pizza.id)] = Math.max(0, Number(shift1?.[pizza.id]) || 0);
-    packed[salesShiftKey(2, pizza.id)] = Math.max(0, Number(shift2?.[pizza.id]) || 0);
-  });
-  return packed;
-}
 
-function salesShiftKey(shift, pizzaId) {
-  return (shift === 2 ? SALES_SHIFT_2_PREFIX : SALES_SHIFT_1_PREFIX) + pizzaId;
-}
 
 function splitStockPayload(values) {
   return Object.entries(values || {}).reduce(
@@ -638,6 +659,7 @@ function getErrorMessage(error) {
 }
 
 async function persistDatabaseWrite(action) {
+  store.pendingWrites += 1;
   try {
     await action();
     store.dbReady = true;
@@ -657,26 +679,14 @@ async function persistDatabaseWrite(action) {
       showToast("Gagal menyimpan ke database. Cek schema DOKO.", "error");
       return false;
     }
+  } finally {
+    store.pendingWrites -= 1;
   }
 }
 function render() {
-  const route = normalizeRoute(location.pathname);
-
-  if (route === "/admin") {
-    app.innerHTML = store.adminUnlocked ? shell("admin", renderAdmin()) : pinShell(renderAdminPin());
-  } else if (route === "/input") {
-    app.innerHTML = shell("input", renderInput());
-  } else if (route === "/view") {
-    store.adminView = "reports";
-    app.innerHTML = store.adminUnlocked ? shell("admin", renderAdmin()) : pinShell(renderAdminPin());
-  } else {
-    app.innerHTML = "";
-  }
-
-  if (store.attendanceMode) {
-    app.insertAdjacentHTML("beforeend", renderCameraModal());
-    startCamera();
-  }
+  if (access.loading && hasAccessSession()) { app.innerHTML = ""; return; }
+  if (!hasAccessSession()) { app.innerHTML = pinShell(renderAccessLogin()); return; }
+  app.innerHTML = isAccessAdmin() ? shell("admin",renderAdmin()) : shell("staff",renderStaffPortal());
 
   if (store.attendancePhotoPreview) {
     app.insertAdjacentHTML("beforeend", renderPhotoPreviewModal());
@@ -687,21 +697,23 @@ function render() {
 
 function shell(role, content) {
   const roleLabel = {
-    admin: "Halaman admin",
-    input: "Input penjualan harian",
+    admin: store.tenantResolved && !isAllTenants() ? staffTenantLabel() : "Halaman admin",
+    staff: `${access.actor?.name || "Staff"}${store.tenants.length ? " · " + tenantLabel() : ""}`,
+    input: store.tenantResolved ? staffTenantLabel() : "Memuat tenant...",
     viewer: "Laporan bagi hasil tenant Pizzain",
   }[role];
 
   return `
     <div class="shell">
       <header class="topbar">
-        <a class="brand" href="${roleHref(role)}" data-link aria-label="Pizzain DOKO ${role}">
-          <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain DOKO" /></span>
+        <a class="brand" href="${roleHref(role)}" data-link aria-label="Pizzain Tenant ${role}">
+          <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain Tenant" /></span>
           <span>
-            <h1>Pizzain DOKO</h1>
-            <p>${roleLabel}</p>
+            <h1>Pizzain Tenant</h1>
+            <p>${escapeHtml(roleLabel)}</p>
           </span>
         </a>
+        ${hasAccessSession() ? '<button class="access-logout" type="button" data-access-logout aria-label="Keluar dari akun"><span class="material-symbols-outlined" aria-hidden="true">logout</span><span>Keluar</span></button>' : ""}
       </header>
       ${content}
     </div>
@@ -717,45 +729,30 @@ function pinShell(content) {
 }
 
 function roleHref(role) {
+  if (hasAccessSession()) return store.tenantResolved ? `/view${store.tenantSelection ? "?tenant="+encodeURIComponent(store.tenantSelection) : ""}` : location.pathname + (location.search || "");
+  if (role === "input") return store.tenantResolved ? `/input/${encodeURIComponent(currentTenant.id)}` : location.pathname + (location.search || "");
   if (role === "viewer") return "/view";
-  return `/${role}`;
+  return `/${role}${store.tenantSelection !== DEFAULT_TENANT.id ? `?tenant=${encodeURIComponent(store.tenantSelection)}` : ""}`;
 }
 
-function renderAdminPin() {
-  const pinDots = Array.from({ length: 4 }, (_, index) => `<span class="pin-dot ${store.adminPinInput.length > index ? "filled" : ""}"></span>`).join("");
-
-  return `
-    <main class="main narrow admin-pin-screen">
-      <section class="panel admin-pin-card">
-        <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain DOKO" /></span>
-        <p class="pin-help">Masukkan Pin Admin</p>
-        <div class="pin-entry" data-pin-focus>
-          <span class="pin-label">PIN Admin</span>
-          <div class="pin-dots" aria-hidden="true">${pinDots}</div>
-          <input id="admin-pin" class="pin-hidden-input" data-admin-pin type="password" inputmode="numeric" maxlength="4" value="${escapeHtml(store.adminPinInput)}" aria-label="PIN Admin" />
-        </div>
-        <button class="btn full" data-unlock-admin>
-          <span class="material-symbols-outlined">lock_open</span>
-          Masuk
-        </button>
-      </section>
-    </main>
-  `;
-}
+function renderAdminPin() { return renderAccessLogin(); }
 
 function renderAdmin() {
+  if (!store.tenantResolved) return `<main class="main narrow"><section class="panel stack"><p role="status">${escapeHtml(store.tenantError || "Memuat data tenant...")}</p>${store.tenantError ? '<button class="btn secondary" data-retry-tenant>Coba lagi</button>' : ""}</section></main>`;
   if (store.adminView === "pizza" || store.adminView === "fee") {
     store.adminView = "settings";
   }
   const summary = getSummaryForDates(getViewerDates());
   return `
-    <main class="main narrow admin-main">
-      <nav class="input-tabs admin-tabs" aria-label="Menu admin">
+    <main class="main narrow admin-main ${store.adminView === 'input' ? 'admin-input-main' : ''}">
+      <nav class="input-tabs admin-tabs access-admin-tabs" aria-label="Menu admin">
         ${adminMenuButton("dashboard", "space_dashboard", "Dashboard")}
         ${adminMenuButton("reports", "receipt_long", "Laporan")}
-        ${adminMenuButton("attendance", "photo_camera", "Absensi")}
+        ${adminMenuButton("input", "point_of_sale", "Input")}
+        ${adminMenuButton("staff", "groups", "Staff")}
         ${adminMenuButton("settings", "settings", "Setting")}
       </nav>
+      ${renderTenantSelector()}
       <section class="stack">
         ${renderAdminContent(summary)}
       </section>
@@ -773,6 +770,12 @@ function adminMenuButton(view, icon, label) {
 }
 
 function renderAdminContent(summary) {
+  if (store.adminView === "staff") return renderAccessManagement();
+  if (store.dbLoading) return '<section class="panel"><p role="status">Memuat data tenant...</p></section>';
+  if (store.tenantError) return '<section class="panel"><p role="alert">' + escapeHtml(store.tenantError) + '</p><button class="btn secondary" type="button" data-retry-tenant>Coba lagi</button></section>';
+  if (isAllTenants()) return renderCombinedTenants();
+  if (store.adminView === "input") return renderInput({embedded:true});
+
   if (store.adminView === "settings") return renderManagePizza();
   if (store.adminView === "attendance") return renderAttendanceHistory();
   if (store.adminView === "reports") return renderAdminReport();
@@ -783,6 +786,10 @@ function renderAdminDashboard(summary) {
   const selectedDates = getViewerDates();
   const showStock = selectedDates.length === 1;
   const selectedDate = showStock ? selectedDates[0] : "";
+  if (!hasTenantDataForDates(selectedDates)) return `
+    <section class="panel stack viewer-filter-panel admin-filter-panel"><div class="segmented" role="tablist" aria-label="Filter tanggal dashboard admin">${viewerFilterButton("today", "Hari Ini")}${viewerFilterButton("yesterday", "Kemarin")}${viewerFilterButton("custom", "Custom")}</div>${store.viewerFilter === "custom" ? renderCalendarRange() : ""}</section>
+    ${selectedDate ? renderAdminQuickPanels(selectedDate) : ""}
+    ${renderTenantEmptyState(selectedDates)}`;
   return `
     <section class="panel stack viewer-filter-panel admin-filter-panel">
       <div class="segmented" role="tablist" aria-label="Filter tanggal dashboard admin">
@@ -818,7 +825,7 @@ function renderAdminDashboard(summary) {
       </div>
       <div class="viewer-summary-row">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Bagi Hasil DOKO</span>
+          <span class="viewer-summary-title">Bagi Hasil ${escapeHtml(tenantLabel())}</span>
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.ownerShare)}</strong>
       </div>
@@ -986,6 +993,9 @@ function renderAdminVariantList(dates, type, options = {}) {
         .map(
           (row) => {
             const value = getValue(row);
+            if (editing && type === "sales" && (row.pizza.packSize || store.records[editDate]?.salesDetail?.[row.pizza.id]?.pack_size)) {
+              return renderPackSalesRow(row.pizza, store.adminEdit.values, store.adminEdit.packs || {}, store.records[editDate]?.salesDetail || {}, editDate);
+            }
             return `
             <article class="admin-compact-row">
               <div>
@@ -1139,6 +1149,7 @@ function beginAdminRecordEdit(type, date) {
   store.adminEdit = {
     type,
     date,
+    packs: salesPackCounts(record.salesDetail),
     values: store.pizzas
       .filter((pizza) => pizza.active)
       .reduce((values, pizza) => {
@@ -1187,9 +1198,8 @@ async function saveAdminRecordEdit(type, date) {
 
   const previousRecord = store.records[date]
     ? {
+        ...store.records[date],
         sales: { ...store.records[date].sales },
-        salesShift1: { ...(store.records[date].salesShift1 || {}) },
-        salesShift2: { ...(store.records[date].salesShift2 || {}) },
         refill: { ...(store.records[date].refill || {}) },
         stock: { ...store.records[date].stock },
       }
@@ -1199,10 +1209,7 @@ async function saveAdminRecordEdit(type, date) {
 
   store.adminEdit.saving = true;
   record[type] = getAdminRecordDraftValues();
-  if (type === "sales") {
-    record.salesShift1 = { ...record.sales };
-    record.salesShift2 = {};
-  }
+  if (type === "sales") record.salesDetail = buildSalesDetail(record.sales, store.adminEdit.packs, record.salesDetail);
   store.records[date] = record;
   if (type !== "refill") {
     store.dailySubmitted[date] = { ...previousProgress, [type]: true };
@@ -1234,14 +1241,14 @@ function renderManagePizza() {
   return `
     <section class="panel product-list-panel">
       <div class="product-panel-head">
-        <h3>Daftar Produk</h3>
+        <h3>Produk ${escapeHtml(tenantLabel())}</h3>
         <button class="btn product-add-btn" type="button" data-add-pizza>
           <span class="material-symbols-outlined">add</span>
           Produk
         </button>
       </div>
       <div class="stack product-list">
-        ${store.pizzas.map(renderPizzaAdminRow).join("")}
+        ${store.pizzas.map(renderPizzaAdminRow).join("") || '<p class="muted">Belum ada produk. Tambahkan katalog untuk tenant ini.</p>'}
       </div>
     </section>
     ${showForm ? `
@@ -1261,12 +1268,20 @@ function renderManagePizza() {
             <input id="pizza-name" data-form-field="name" value="${escapeHtml(store.pizzaForm.name)}" placeholder="Tuna Melt Slice" />
           </label>
           <label class="compact-product-field" for="pizza-cost">
-            <span>Modal</span>
+            <span>Modal / slice</span>
             <input id="pizza-cost" data-form-field="cost" inputmode="numeric" value="${escapeHtml(store.pizzaForm.cost)}" placeholder="10000" />
           </label>
           <label class="compact-product-field" for="pizza-price">
-            <span>Jual</span>
+            <span>Jual / slice</span>
             <input id="pizza-price" data-form-field="price" inputmode="numeric" value="${escapeHtml(store.pizzaForm.price)}" placeholder="25000" />
+          </label>
+          <label class="compact-product-field" for="pizza-pack-size">
+            <span>Slice / loyang</span>
+            <input id="pizza-pack-size" data-form-field="packSize" inputmode="numeric" value="${escapeHtml(store.pizzaForm.packSize || '')}" placeholder="0 = hanya eceran" />
+          </label>
+          <label class="compact-product-field" for="pizza-pack-price">
+            <span>Jual / loyang</span>
+            <input id="pizza-pack-price" data-form-field="packPrice" inputmode="numeric" value="${escapeHtml(store.pizzaForm.packPrice || '')}" placeholder="100000" />
           </label>
           <div class="product-form-actions">
             <label class="switch compact-switch">
@@ -1279,7 +1294,6 @@ function renderManagePizza() {
       </section>
     ` : ""}
     ${renderOwnerFee()}
-    ${renderAttendanceSettings()}
     ${renderAdminPassword()}
   `;
 }
@@ -1291,7 +1305,7 @@ function renderPizzaAdminRow(pizza) {
         <span class="pizza-initial">${getInitials(pizza.name)}</span>
         <div>
           <h4>${pizza.name}</h4>
-          <p>Modal ${rupiah(pizza.cost)} | Jual ${rupiah(pizza.price)}</p>
+          <p>Modal ${rupiah(pizza.cost)} | Jual ${rupiah(pizza.price)}${pizza.packSize ? ` / slice<br>${rupiah(pizza.packPrice)} / loyang · ${pizza.packSize} slice` : ''}</p>
           <span class="chip ${pizza.active ? "green" : "gray"}">${pizza.active ? "Aktif" : "Nonaktif"}</span>
         </div>
       </div>
@@ -1311,19 +1325,26 @@ function renderPizzaAdminRow(pizza) {
 }
 
 function renderOwnerFee() {
+  const fee = store.ownerFeeDraft || store;
+  const percent = fee.ownerFeeMode === "percent";
   return `
     <section class="panel fee-compact-panel">
       <div class="fee-compact-head">
         <div>
-          <span>Fee Pemilik</span>
-          <strong>${rupiah(store.ownerFee)} / slice</strong>
+          <span>Bagi Hasil Pemilik Tempat</span>
+          <strong>${ownerFeeLabel(store)}</strong>
         </div>
         <button class="btn fee-save-btn" data-save-fee aria-label="Simpan fee pemilik">Simpan</button>
       </div>
+      <div class="segmented fee-mode" role="group" aria-label="Jenis bagi hasil">
+        <button type="button" data-fee-mode="fixed" class="${percent ? "" : "active"}" aria-pressed="${!percent}">Rp / slice</button>
+        <button type="button" data-fee-mode="percent" class="${percent ? "active" : ""}" aria-pressed="${percent}">% Penjualan</button>
+      </div>
       <label class="fee-compact-field" for="owner-fee">
-        <span>Nominal</span>
-        <input id="owner-fee" data-owner-fee inputmode="numeric" value="${store.ownerFee}" />
+        <span>${percent ? "Persen (%)" : "Nominal (Rp)"}</span>
+        <input id="owner-fee" data-owner-fee inputmode="${percent ? "decimal" : "numeric"}" value="${escapeHtml(String(percent ? fee.ownerFeePercent : fee.ownerFee))}" />
       </label>
+      <p class="fee-help">${percent ? "Dari harga jual setiap slice, sebelum modal dan biaya." : "Nominal tetap untuk setiap slice terjual."}</p>
     </section>
   `;
 }
@@ -1364,13 +1385,13 @@ function renderAdminPassword() {
       <div class="password-compact-head">
         <div>
           <span>Password Admin</span>
-          <strong>PIN 4 digit</strong>
+          <strong>PIN 4–6 angka</strong>
         </div>
         <button class="btn password-save-btn" data-save-admin-password aria-label="Simpan password admin">Simpan</button>
       </div>
       <label class="password-compact-field" for="admin-password-new">
         <span>PIN Baru</span>
-        <input id="admin-password-new" data-admin-password-pin type="password" inputmode="numeric" maxlength="4" value="${escapeHtml(store.adminPasswordForm.pin)}" placeholder="0000" />
+        <input id="admin-password-new" data-admin-password-pin type="password" inputmode="numeric" maxlength="6" value="${escapeHtml(store.adminPasswordForm.pin)}" placeholder="4–6 angka" />
       </label>
     </section>
   `;
@@ -1540,24 +1561,23 @@ function renderPhotoPreviewModal() {
   `;
 }
 function renderInput(options = {}) {
-  const today = isoDate(new Date());
-  const attendance = store.attendance[today] || { in: null, out: null };
-  const canSubmitDaily = Boolean(attendance.in);
+  if (!store.tenantResolved || store.dbLoading || store.tenantError || !currentTenant.active) {
+    return '<main class="main narrow"><section class="panel stack"><h3>' + escapeHtml(store.tenantResolved ? staffTenantLabel() : "Input Tenant") + '</h3><p role="status">' + escapeHtml(store.tenantError || (!currentTenant.active ? "Staff ini sudah nonaktif. Hubungi admin." : "Memuat data tenant...")) + '</p><button class="btn secondary" type="button" data-retry-tenant>Coba Lagi</button></section></main>';
+  }
   const showSubmit = !options.preview && (store.inputPage === "sales" || store.inputPage === "stock");
   const activePizzas = store.pizzas.filter((pizza) => pizza.active);
-  const previewClass = options.preview ? "" : "main narrow";
+  const previewClass = options.preview || options.embedded ? "" : "main narrow";
 
   return `
     <main class="${previewClass}">
       <nav class="input-tabs" aria-label="Halaman input">
-        ${inputPageButton("attendance", "badge", "Absensi")}
         ${inputPageButton("sales", "point_of_sale", "Penjualan")}
         ${inputPageButton("stock", "inventory_2", "Stok")}
         ${inputPageButton("timer", "timer", "Timer")}
       </nav>
-      ${renderInputPage({ today, attendance, activePizzas })}
+      ${renderInputPage({ activePizzas })}
     </main>
-    ${showSubmit ? renderSubmitBar(canSubmitDaily) : ""}
+    ${showSubmit ? renderSubmitBar() : ""}
   `;
 }
 
@@ -1570,70 +1590,33 @@ function inputPageButton(page, icon, label) {
   `;
 }
 
-function renderInputPage({ today, attendance, activePizzas }) {
+function renderInputPage({ activePizzas }) {
   if (store.inputPage === "sales") return renderInputSales(activePizzas);
   if (store.inputPage === "stock") return renderInputStock(activePizzas);
   if (store.inputPage === "timer") return renderInputTimers();
-  return renderInputAttendance(today, attendance);
+  return renderInputSales(activePizzas);
 }
 
-function renderInputAttendance(today, attendance) {
-  const canCheckOut = Boolean(attendance.in && isDailySubmitted(today));
-  const settings = getAttendanceSettings();
-  return `
-    <section class="panel stack attendance-panel">
-      <div class="section-title attendance-title">
-        <span class="icon-tile"><span class="material-symbols-outlined">badge</span></span>
-        <div>
-          <h3>Absensi Hari Ini</h3>
-          <p>Laporan kehadiran staff pizzain tenant</p>
-        </div>
-      </div>
-      <div class="input-attendance-meta attendance-meta-chips">
-        <span>${formatDate(today)}</span>
-        <span>Jam kerja ${displayClock(settings.checkIn)} - ${displayClock(settings.checkOut)}</span>
-      </div>
-      <div class="attendance-actions">
-        ${renderAttendanceAction("in", attendance.in, "Masuk", "how_to_reg")}
-        ${renderAttendanceAction("out", attendance.out, "Pulang", "logout", {
-          disabled: !canCheckOut,
-          hint: getCheckoutHint(today, attendance),
-        })}
-      </div>
-    </section>
-  `;
-}
 
 function renderInputSales(activePizzas) {
   return `
     <section class="panel sales-panel shift-sales-panel">
       <div class="section-title solid compact-sales-title">
         <span class="icon-tile"><span class="material-symbols-outlined">point_of_sale</span></span>
-        <div>
-          <h3>Laporan Penjualan</h3>
-          <p>Jumlah pizza terjual hari ini</p>
-        </div>
+        <div><h3>Laporan Penjualan</h3></div>
       </div>
       <div class="sales-shift-stack">
-        ${renderSalesShiftCard("Shift 1", "salesShift1", activePizzas)}
-        ${renderSalesShiftCard("Shift 2", "salesShift2", activePizzas)}
+        ${renderStaffSalesCard(activePizzas)}
       </div>
     </section>
   `;
 }
-
-function renderSalesShiftCard(label, type, activePizzas) {
-  const total = sumDraft(type);
-  const shiftClass = type === "salesShift1" ? "shift-one" : "shift-two";
+function renderStaffSalesCard(activePizzas) {
+  const total = sumDraft("sales");
   return `
-    <section class="sales-shift-card ${shiftClass}" aria-label="Penjualan ${label}">
-      <div class="sales-shift-head">
-        <h4>${label}</h4>
-        <span>${total} slice</span>
-      </div>
-      <div class="sales-shift-list">
-        ${activePizzas.map((pizza) => renderCounterRow(pizza, type)).join("")}
-      </div>
+    <section class="sales-shift-card shift-one" aria-label="Penjualan Staff">
+      <div class="sales-shift-head"><h4>TOTAL PENJUALAN</h4><span>${total} slice</span></div>
+      <div class="sales-shift-list">${activePizzas.map((pizza) => renderCounterRow(pizza, "sales")).join("")}</div>
     </section>
   `;
 }
@@ -1734,33 +1717,11 @@ function renderTimerCard(timer) {
   `;
 }
 
-function renderAttendanceAction(type, record, label, icon, options = {}) {
-  if (record) {
-    const feedback = getAttendanceFeedbackFromTime(type, record.time);
-    return `
-      <div class="attendance-result ${feedback.status}">
-        <div class="attendance-result-head">
-          <span class="detail-label">Absen ${label}</span>
-        </div>
-        <div class="attendance-time-row">
-          <p>${record.time}</p>
-          <span class="attendance-badge">${feedback.badge}</span>
-        </div>
-        <small>${feedback.message}</small>
-      </div>
-    `;
-  }
-
-  const secondary = type === "out" ? " secondary" : "";
-  return `
-    <button class="btn attendance-btn${secondary}" data-open-camera="${type}" ${options.disabled ? "disabled" : ""}>
-      <span class="material-symbols-outlined">${icon}</span>
-      <span>Absen ${label}${options.disabled ? `<small>${options.hint}</small>` : ""}</span>
-    </button>
-  `;
-}
 
 function renderCounterRow(pizza, type) {
+  if (type === "sales" && (pizza.packSize || store.records[isoDate(new Date())]?.salesDetail?.[pizza.id]?.pack_size)) {
+    return renderPackSalesRow(pizza, store.inputDraft.sales, store.inputDraft.packs || {}, store.records[isoDate(new Date())]?.salesDetail || {});
+  }
   const value = store.inputDraft[type]?.[pizza.id] || 0;
   const locked = isDraftLocked(type);
   return `
@@ -1784,7 +1745,7 @@ function renderCounterRow(pizza, type) {
   `;
 }
 
-function renderSubmitBar(canSubmitDaily) {
+function renderSubmitBar() {
   const type = store.inputPage === "stock" ? "stock" : "sales";
   const pageLabel = type === "stock" ? "Stok" : "Penjualan";
   const locked = isDraftLocked(type);
@@ -1796,41 +1757,29 @@ function renderSubmitBar(canSubmitDaily) {
 
   return `
     <div class="submit-bar">
-      ${canSubmitDaily ? "" : `<p>Absen Masuk dulu untuk submit ${pageLabel.toLowerCase()}.</p>`}
-      <button class="btn full" data-submit-daily ${store.submitLoading || !canSubmitDaily ? "disabled" : ""}>${label}</button>
+      <button class="btn full" data-submit-daily ${store.submitLoading ? "disabled" : ""}>${label}</button>
     </div>
   `;
 }
 
 function renderAdminReport() {
   const selectedDates = getViewerDates();
-  const reportView = store.reportView || "tenant";
-  const reportLabel = reportView === "shift1" ? "Shift 1" : reportView === "shift2" ? "Shift 2" : "Tenant";
+  const reportView = store.reportView === "staff" ? "staff" : "tenant";
+  const reportLabel = reportView === "staff" ? "Staff" : "Tenant";
   const summary = getSummaryForDates(selectedDates, { salesScope: reportView });
   const isCustom = store.viewerFilter === "custom";
   const isTenantReport = reportView === "tenant";
+  if (!hasTenantDataForDates(selectedDates)) return renderAdminReportFilters(isCustom) + renderTenantEmptyState(selectedDates);
 
   return `
-    <section class="panel stack viewer-filter-panel admin-report-filter">
-      <div class="segmented" role="tablist" aria-label="Filter tanggal laporan">
-        ${viewerFilterButton("today", "Hari Ini")}
-        ${viewerFilterButton("yesterday", "Kemarin")}
-        ${viewerFilterButton("custom", "Custom")}
-      </div>
-      <div class="report-type-tabs" role="tablist" aria-label="Jenis laporan">
-        ${reportTypeButton("tenant", "Tenant")}
-        ${reportTypeButton("shift1", "Shift 1")}
-        ${reportTypeButton("shift2", "Shift 2")}
-      </div>
-      ${isCustom ? renderCalendarRange() : ""}
-    </section>
+    ${renderAdminReportFilters(isCustom)}
     <section class="admin-report-ticket" aria-label="Laporan untuk pemilik usaha">
       <div class="ticket-head">
         <div class="ticket-head-copy">
           <span class="brand-mark"><img src="/assets/logo-pizzain-apk.jpg" alt="Logo Pizzain DOKO" /></span>
           <div>
             <span>Laporan ${reportLabel}</span>
-            <h3>Pizzain DOKO</h3>
+            <h3>${escapeHtml(staffTenantLabel())}</h3>
             <p>${ticketDateDescription(selectedDates)}</p>
           </div>
         </div>
@@ -1840,7 +1789,37 @@ function renderAdminReport() {
       <div class="ticket-section-title">Detail Pizza Terjual</div>
       ${renderVariantReports(selectedDates, { showMoney: false, compact: true, ticket: true, salesScope: reportView })}
       <div class="ticket-divider"></div>
-      ${isTenantReport ? renderViewerTotals(summary, isCustom || selectedDates.length > 1, { ticket: true }) : renderShiftReportTotals(summary, reportLabel)}
+      ${isTenantReport ? renderViewerTotals(summary, isCustom || selectedDates.length > 1, { ticket: true }) : renderStaffReportTotals(summary)}
+    </section>
+  `;
+}
+
+function hasTenantDataForDates(dates) {
+  return dates.some((date) => Boolean(store.records[date]) || Boolean(store.dailyExpenses[date]?.length));
+}
+
+function renderTenantEmptyState(dates, kind = "") {
+  return `<section class="panel tenant-empty-state" role="status">
+    <span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>
+    <h3>Belum ada data</h3>
+    <p>${escapeHtml(staffTenantLabel())} belum memiliki data ${kind === "sales" ? "penjualan" : kind === "stock" ? "stok" : "penjualan, stok, atau pengeluaran"} pada tanggal ini.</p>
+    <small>${ticketDateDescription(dates)}</small>
+  </section>`;
+}
+
+function renderAdminReportFilters(isCustom) {
+  return `
+    <section class="panel stack viewer-filter-panel admin-report-filter">
+      <div class="segmented" role="tablist" aria-label="Filter tanggal laporan">
+        ${viewerFilterButton("today", "Hari Ini")}
+        ${viewerFilterButton("yesterday", "Kemarin")}
+        ${viewerFilterButton("custom", "Custom")}
+      </div>
+      <div class="report-type-tabs" role="tablist" aria-label="Jenis laporan">
+        ${reportTypeButton("tenant", "Tenant")}
+        ${reportTypeButton("staff", "Staff")}
+      </div>
+      ${isCustom ? renderCalendarRange() : ""}
     </section>
   `;
 }
@@ -1850,9 +1829,10 @@ function reportTypeButton(view, label) {
   return `<button class="${active}" type="button" data-report-view="${view}">${label}</button>`;
 }
 
-function renderShiftReportTotals(summary, label) {
-  const income = summary.slices * store.ownerFee;
-  const incomeFormula = `${summary.slices} slice x ${rupiah(store.ownerFee)} =`;
+function renderStaffReportTotals(summary) {
+  const label = "Staff";
+  const income = summary.ownerShare;
+  const incomeFormula = ownerFeeFormula(summary);
 
   return `
     <section class="viewer-report-summary report-ticket-summary shift-income-summary">
@@ -1908,7 +1888,7 @@ function viewerFilterButton(filter, label) {
 }
 
 function renderViewerTotals(summary, rangeMode, options = {}) {
-  const feeFormula = `${summary.slices} slice x ${rupiah(store.ownerFee)} =`;
+  const feeFormula = ownerFeeFormula(summary);
   const pizzainFormula = `${rupiah(summary.revenue)} - ${rupiah(summary.ownerShare)} =`;
 
   return `
@@ -1924,7 +1904,7 @@ function renderViewerTotals(summary, rangeMode, options = {}) {
       </div>
       <div class="viewer-summary-row">
         <div class="viewer-summary-copy">
-          <span class="viewer-summary-title">Bagi Hasil DOKO</span>
+          <span class="viewer-summary-title">Bagi Hasil ${escapeHtml(tenantLabel())}</span>
           <em class="viewer-summary-formula">${feeFormula}</em>
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.ownerShare)}</strong>
@@ -2030,7 +2010,7 @@ function renderVariantReports(dates, options) {
               <article class="viewer-report-row">
                 <div class="viewer-report-name">
                   <h4>${pizza.name}</h4>
-                  <p>${rupiah(pizza.price)} / slice</p>
+                  <p>${pizza.packSize ? packSalesDescription(dates, pizza) : `${rupiah(pizza.price)} / slice`}</p>
                 </div>
                 <span class="viewer-sold-value"><strong>${sold}</strong> slice</span>
               </article>
@@ -2066,42 +2046,6 @@ function renderVariantReports(dates, options) {
   `;
 }
 
-function renderCameraModal() {
-  const modeLabel = store.attendanceMode === "in" ? "Absen Masuk" : "Absen Pulang";
-  return `
-    <div class="modal open" role="dialog" aria-modal="true" aria-label="Camera Attendance Screen">
-      <section class="camera-screen">
-        <header class="camera-top">
-          <button class="icon-btn" data-close-camera aria-label="Tutup kamera"><span class="material-symbols-outlined">arrow_back</span></button>
-          <div class="modal-title"><h2>${modeLabel}</h2></div>
-        </header>
-        <div class="camera-stage">
-          ${
-            store.capturedPhoto
-              ? `<img alt="Preview foto absensi" src="${store.capturedPhoto}" />`
-              : `<video id="camera-video" autoplay playsinline muted></video><div id="camera-fallback" class="camera-fallback"><p>Posisikan wajah di area tengah sebelum mengambil foto.</p></div>`
-          }
-          <div class="camera-guide"></div>
-        </div>
-        <footer class="camera-bottom">
-          ${
-            store.capturedPhoto
-              ? `<div class="camera-actions">
-                  <button class="btn secondary" data-retake-photo><span class="material-symbols-outlined">refresh</span>Ambil Ulang</button>
-                  <button class="btn" data-save-attendance><span class="material-symbols-outlined">check_circle</span>Simpan Absensi</button>
-                </div>`
-              : `<div class="capture-actions">
-                  <button class="capture-btn" data-capture-photo aria-label="Ambil foto"><span></span></button>
-                  <button class="flip-btn" data-flip-camera aria-label="Flip kamera">
-                    <span class="material-symbols-outlined">cameraswitch</span>
-                  </button>
-                </div>`
-          }
-        </footer>
-      </section>
-    </div>
-  `;
-}
 
 function renderViewerBottomNav() {
   return `
@@ -2122,11 +2066,37 @@ function metric(label, value, extra = "", formula = "") {
 }
 
 function handleClick(event) {
+  if (handleAccessClick(event)) return;
+  if (!hasAccessSession()) return;
+  if (!event.target.closest("[data-tenant-picker]")) closeTenantPicker();
+  if (event.target.closest('[data-tenant-toggle][aria-disabled="true"]')) { event.preventDefault(); return; }
+  if (event.target.closest("[data-retry-tenant]")) { initializeDatabase(); return; }
+  const selectedTenant = event.target.closest("[data-select-tenant]")?.dataset.selectTenant;
+  if (selectedTenant) {
+    const fromPicker = Boolean(event.target.closest("[data-tenant-option]"));
+    closeTenantPicker();
+    switchTenant(selectedTenant).then(() => {
+      if (fromPicker) document.querySelector("[data-tenant-toggle]")?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  const editStaffId = event.target.closest("[data-edit-staff]")?.dataset.editStaff;
+  if (editStaffId) { editStaff(editStaffId); return; }
+  if (event.target.closest("[data-open-staff]")) {
+    store.staffFormOpen = true; store.staffError = ""; render(); return;
+  }
+  const toggleStaffId = event.target.closest("[data-toggle-staff]")?.dataset.toggleStaff;
+  if (toggleStaffId) { toggleStaff(toggleStaffId); return; }
+  const copyTenantId = event.target.closest("[data-copy-tenant]")?.dataset.copyTenant;
+  if (copyTenantId) { copyTenantUrl(copyTenantId); return; }
+  if (event.target.closest("[data-cancel-staff]")) {
+    store.staffForm = emptyStaffForm(); store.staffFormOpen = false; store.editingStaffId = null; store.newStaffId = null; store.staffError = ""; render(); return;
+  }
+
   const link = event.target.closest("[data-link]");
   if (link) {
     event.preventDefault();
     history.pushState({}, "", link.getAttribute("href"));
-    closeCamera();
     render();
     return;
   }
@@ -2160,8 +2130,11 @@ function handleClick(event) {
 
   const adminView = event.target.closest("[data-admin-view]")?.dataset.adminView;
   if (adminView) {
+    if (!isAccessAdmin()) return;
     store.adminView = adminView;
-    render();
+    if (adminView === "staff") loadAccessAccounts();
+    else if (["attendance", "settings"].includes(adminView) && !store.dbLoading) initializeDatabase(false);
+    else render();
     return;
   }
 
@@ -2216,7 +2189,7 @@ function handleClick(event) {
   }
   const reportView = event.target.closest("[data-report-view]")?.dataset.reportView;
   if (reportView) {
-    store.reportView = reportView;
+    store.reportView = reportView === "staff" ? "staff" : "tenant";
     render();
     return;
   }
@@ -2224,7 +2197,25 @@ function handleClick(event) {
 
   const inputPage = event.target.closest("[data-input-page]")?.dataset.inputPage;
   if (inputPage) {
+    if (isAccessStaff() && !staffPages().some(([page])=>page===inputPage)) return;
     store.inputPage = inputPage;
+    render();
+    return;
+  }
+
+  const packCounter = event.target.closest("[data-pack-counter]");
+  if (packCounter) {
+    const pizza = store.pizzas.find(item => item.id === packCounter.dataset.id && item.active);
+    const date = packCounter.dataset.date;
+    if (!pizza) return;
+    if (date) {
+      if (!isAccessAdmin() || !isAdminRecordEditing("sales", date) || store.adminEdit.saving) return;
+      adjustPackSale(store.adminEdit.values, store.adminEdit.packs, pizza, packCounter.dataset.packCounter, Number(packCounter.dataset.delta), store.records[date]?.salesDetail?.[pizza.id]);
+    } else {
+      if (!canAccess("input_sales") || isDraftLocked("sales")) return;
+      if (!store.inputDraft.packs) store.inputDraft.packs = {};
+      adjustPackSale(store.inputDraft.sales, store.inputDraft.packs, pizza, packCounter.dataset.packCounter, Number(packCounter.dataset.delta), store.records[isoDate(new Date())]?.salesDetail?.[pizza.id]);
+    }
     render();
     return;
   }
@@ -2234,6 +2225,7 @@ function handleClick(event) {
     const type = counter.dataset.counter;
     const id = counter.dataset.id;
     const delta = Number(counter.dataset.delta);
+    if (isAccessStaff() && !canAccess(type === "sales" ? "input_sales" : "input_stock")) return;
     if (isDraftLocked(type)) {
       showToast("Klik Perbaharui Data dulu untuk mengubah qty.", "error");
       return;
@@ -2241,41 +2233,6 @@ function handleClick(event) {
     if (!store.inputDraft[type]) store.inputDraft[type] = {};
     store.inputDraft[type][id] = Math.max(0, (store.inputDraft[type][id] || 0) + delta);
     render();
-    return;
-  }
-
-  const cameraButton = event.target.closest("[data-open-camera]");
-  if (cameraButton) {
-    store.attendanceMode = cameraButton.dataset.openCamera;
-    store.capturedPhoto = null;
-    render();
-    return;
-  }
-
-  if (event.target.closest("[data-close-camera]")) {
-    closeCamera();
-    render();
-    return;
-  }
-
-  if (event.target.closest("[data-capture-photo]")) {
-    capturePhoto();
-    return;
-  }
-
-  if (event.target.closest("[data-flip-camera]")) {
-    flipCamera();
-    return;
-  }
-
-  if (event.target.closest("[data-retake-photo]")) {
-    store.capturedPhoto = null;
-    render();
-    return;
-  }
-
-  if (event.target.closest("[data-save-attendance]")) {
-    saveAttendance();
     return;
   }
 
@@ -2362,6 +2319,8 @@ function handleClick(event) {
       name: pizza.name,
       cost: String(pizza.cost),
       price: String(pizza.price),
+      packSize: String(pizza.packSize || ''),
+      packPrice: String(pizza.packPrice || ''),
       active: pizza.active,
     };
     render();
@@ -2371,6 +2330,17 @@ function handleClick(event) {
 
   if (event.target.closest("[data-save-pizza]")) {
     savePizza();
+    return;
+  }
+
+  const feeModeButton = event.target.closest("[data-fee-mode]");
+  if (feeModeButton) {
+    const fee = store.ownerFeeDraft || { ownerFee: store.ownerFee, ownerFeeMode: store.ownerFeeMode, ownerFeePercent: store.ownerFeePercent };
+    const input = document.querySelector("[data-owner-fee]");
+    fee[fee.ownerFeeMode === "percent" ? "ownerFeePercent" : "ownerFee"] = input?.value ?? "";
+    fee.ownerFeeMode = feeModeButton.dataset.feeMode;
+    store.ownerFeeDraft = fee;
+    render();
     return;
   }
 
@@ -2482,20 +2452,30 @@ async function confirmDeletePizza() {
   render();
 }
 
-function saveOwnerFee() {
+function parseOwnerFeeValue(raw, mode) {
+  const text = String(raw).trim().replace(",", ".");
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return null;
+  const value = Number(text);
+  if (!Number.isSafeInteger(Math.round(value * 100)) || value < 0) return null;
+  if (mode === "percent") return value <= 100 ? value : null;
+  return Number.isInteger(value) && value <= 2147483647 ? value : null;
+}
+
+async function saveOwnerFee() {
+  if (!isAccessAdmin() || store.pendingWrites) return;
   const input = document.querySelector("[data-owner-fee]");
-  const value = Number((input?.value || "").replace(/\D/g, ""));
-  if (value <= 0) {
-    showToast("Gagal menyimpan data. Coba lagi.", "error");
+  const mode = store.ownerFeeDraft?.ownerFeeMode || store.ownerFeeMode;
+  const value = parseOwnerFeeValue(input?.value ?? "", mode);
+  if (value === null) {
+    showToast(mode === "percent" ? "Masukkan persentase 0–100, maksimal 2 desimal" : "Masukkan nominal rupiah utuh, minimal 0", "error");
     return;
   }
-  const previous = store.ownerFee;
-  store.ownerFee = value;
-  persistDatabaseWrite(() => dbUpsertSetting(value)).then((saved) => {
-    if (!saved) store.ownerFee = previous;
-    showToast(saved ? "Fee pemilik berhasil disimpan" : "Fee belum tersimpan ke database", saved ? "success" : "error");
-    render();
-  });
+  const next = { ownerFee: store.ownerFee, ownerFeeMode: mode, ownerFeePercent: store.ownerFeePercent };
+  next[mode === "percent" ? "ownerFeePercent" : "ownerFee"] = value;
+  // Commit the visible value only after the write succeeds; tenant switching is blocked while pending.
+  const saved = await persistDatabaseWrite(() => dbUpsertSetting(next));
+  if (saved) { Object.assign(store, next); store.ownerFeeDraft = null; store.combinedTenants = []; }
+  showToast(saved ? "Bagi hasil pemilik tempat berhasil disimpan" : "Bagi hasil belum tersimpan ke database", saved ? "success" : "error");
   render();
 }
 
@@ -2582,33 +2562,34 @@ function deleteDailyExpense(date, id) {
 }
 
 function syncDailyExpenseWrite(action) {
-  action().catch((error) => {
+  store.pendingWrites += 1;
+  Promise.resolve().then(action).catch((error) => {
     console.warn("Daily expense was saved locally only", error);
-  });
+  }).finally(() => { store.pendingWrites -= 1; });
 }
 
-function saveAdminPassword() {
-  const pin = store.adminPasswordForm.pin.replace(/\D/g, "").slice(0, 4);
-  if (pin.length !== 4) {
-    showToast("PIN admin harus 4 digit.", "error");
-    return;
-  }
-
-  const previous = store.adminPin;
-  store.adminPin = pin;
-  persistDatabaseWrite(() => dbUpsertAdminPin(pin)).then((saved) => {
-    if (!saved) store.adminPin = previous;
-    if (saved) store.adminPasswordForm.pin = "";
-    const passwordError = store.dbError.includes("admin_pin")
-      ? "Kolom admin_pin belum ada. Jalankan supabase-doko-admin-pin.sql dulu."
-      : "Password belum tersimpan ke database. Cek izin tabel doko_settings.";
-    showToast(saved ? "Password admin berhasil disimpan" : passwordError, saved ? "success" : "error");
-    render();
-  });
-  render();
+async function saveAdminPassword() {
+  if (!isAccessAdmin() || access.saving) return;
+  const pin = store.adminPasswordForm.pin.replace(/\D/g, "");
+  if (!/^\d{4,6}$/.test(pin)) { showToast("PIN admin harus 4 sampai 6 angka.","error"); return; }
+  access.saving = true;
+  try {
+    await dbUpsertAdminPin(pin);
+    store.adminPasswordForm.pin = "";
+    clearAccessSession("PIN admin berhasil diubah. Masuk dengan PIN baru.");
+  } catch(error) { showToast(getErrorMessage(error),"error"); }
+  finally { access.saving = false; }
 }
 
 function handleInput(event) {
+  if (handleAccessInput(event)) return;
+  if (!hasAccessSession()) return;
+  const staffField = event.target.dataset.staffField;
+  if (["staff_name", "tenant_name", "location"].includes(staffField)) {
+    store.staffForm[staffField] = event.target.value;
+    return;
+  }
+
   if (event.target.matches("[data-admin-pin]")) {
     store.adminPinInput = event.target.value.replace(/\D/g, "").slice(0, 4);
     event.target.value = store.adminPinInput;
@@ -2617,7 +2598,7 @@ function handleInput(event) {
   }
 
   if (event.target.matches("[data-admin-password-pin]")) {
-    store.adminPasswordForm.pin = event.target.value.replace(/\D/g, "").slice(0, 4);
+    store.adminPasswordForm.pin = event.target.value.replace(/\D/g, "").slice(0, 6);
     event.target.value = store.adminPasswordForm.pin;
     return;
   }
@@ -2655,6 +2636,9 @@ function handleInput(event) {
 }
 
 function handleKeydown(event) {
+  if (event.key === "Enter" && event.target.matches("[data-access-pin]")) { event.preventDefault(); loginAccess(); return; }
+  if (!hasAccessSession()) return;
+  handleTenantPickerKeydown(event);
   if (event.key === "Enter" && event.target.matches("[data-admin-pin]")) {
     event.preventDefault();
     unlockAdmin();
@@ -2676,6 +2660,8 @@ function handleFocusIn(event) {
 }
 
 function handleFocusOut(event) {
+  const picker = event.target.closest("[data-tenant-picker]");
+  if (picker && event.relatedTarget && !picker.contains(event.relatedTarget)) closeTenantPicker();
   if (!event.target.matches("[data-admin-pin], [data-admin-password-pin]")) return;
   setTimeout(() => {
     if (!document.activeElement?.matches("[data-admin-pin], [data-admin-password-pin]")) {
@@ -2711,24 +2697,13 @@ function updateAdminPinDots() {
   });
 }
 
-function unlockAdmin() {
-  if (store.adminPinInput === store.adminPin) {
-    store.adminUnlocked = true;
-    store.adminPinInput = "";
-    document.body.classList.remove("pin-keyboard-active");
-    updateVisibleViewport();
-    showToast("Admin berhasil dibuka", "success");
-    render();
-    return;
-  }
-
-  store.adminPinInput = "";
-  centerFocusedAdminPanel(document.querySelector("[data-admin-pin]"));
-  showToast("PIN admin salah.", "error");
-  render();
-}
+function unlockAdmin() { return loginAccess(); }
 
 function handleChange(event) {
+  if (handleAccessInput(event)) return;
+  if (!hasAccessSession()) return;
+  if (event.target.matches("[data-tenant-select]")) { switchTenant(event.target.value); return; }
+
   if (event.target.matches("[data-calendar-month-select], [data-calendar-year-select]")) {
     const calendar = event.target.closest(".calendar");
     const month = Number(calendar?.querySelector("[data-calendar-month-select]")?.value);
@@ -2757,6 +2732,13 @@ async function savePizza() {
   const name = store.pizzaForm.name.trim();
   const cost = Number(store.pizzaForm.cost.replace(/\D/g, ""));
   const price = Number(store.pizzaForm.price.replace(/\D/g, ""));
+  const packSize = Number(store.pizzaForm.packSize || 0);
+  const packPrice = Number(store.pizzaForm.packPrice || 0);
+
+  if (!Number.isInteger(packSize) || !Number.isSafeInteger(packPrice) || !((packSize === 0 && packPrice === 0) || (packSize >= 2 && packSize <= 100 && packPrice > 0 && packPrice <= 2147483647))) {
+    showToast("Isi 2–100 slice dan harga loyang, atau kosongkan keduanya", "error");
+    return;
+  }
 
   if (!name || cost <= 0 || price <= 0) {
     showToast("Gagal menyimpan data. Coba lagi.", "error");
@@ -2767,7 +2749,7 @@ async function savePizza() {
   if (store.editingPizzaId) {
     pizza = store.pizzas.find((item) => item.id === store.editingPizzaId);
     if (!pizza) return;
-    Object.assign(pizza, { name, cost, price, active: store.pizzaForm.active });
+    Object.assign(pizza, { name, cost, price, packSize, packPrice, active: store.pizzaForm.active });
   } else {
     const baseId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "pizza";
     const id = store.pizzas.some((item) => item.id === baseId) ? `${baseId}-${Date.now()}` : baseId;
@@ -2776,6 +2758,8 @@ async function savePizza() {
       name,
       cost,
       price,
+      packSize,
+      packPrice,
       active: store.pizzaForm.active,
       image: PIZZA_IMAGES.veggie,
     };
@@ -2793,18 +2777,11 @@ async function savePizza() {
   render();
 }
 async function submitDailyData() {
-  if (store.submitLoading) return;
+  if (store.submitLoading || store.dbLoading || !store.dbReady || !store.tenantResolved || store.tenantError || !currentTenant.active) return;
   const today = isoDate(new Date());
-  const attendance = store.attendance[today] || { in: null, out: null };
   const submitType = store.inputPage === "stock" ? "stock" : "sales";
+  if (isAccessStaff() && !canAccess(submitType === "stock" ? "input_stock" : "input_sales")) return;
   const submitLabel = submitType === "stock" ? "Stok" : "Penjualan";
-
-  if (!attendance.in) {
-    store.inputPage = "attendance";
-    showToast(`Absen masuk dulu sebelum submit ${submitLabel.toLowerCase()}.`, "error");
-    render();
-    return;
-  }
 
   if (isDraftLocked(submitType, today)) {
     store.dailyEditUnlocked[submitType] = true;
@@ -2818,19 +2795,17 @@ async function submitDailyData() {
 
   const previousRecord = store.records[today]
     ? {
+        ...store.records[today],
         sales: { ...store.records[today].sales },
-        salesShift1: { ...(store.records[today].salesShift1 || {}) },
-        salesShift2: { ...(store.records[today].salesShift2 || {}) },
         refill: { ...(store.records[today].refill || {}) },
         stock: { ...store.records[today].stock },
       }
     : null;
   const previousProgress = getDailyProgress(today);
-  const record = store.records[today] || { sales: {}, salesShift1: {}, salesShift2: {}, refill: {}, stock: {} };
+  const record = store.records[today] || { sales: {}, refill: {}, stock: {} };
   if (submitType === "sales") {
-    record.salesShift1 = getDraftValues("salesShift1");
-    record.salesShift2 = getDraftValues("salesShift2");
-    record.sales = getCombinedSalesValues(record.salesShift1, record.salesShift2);
+    record.sales = getDraftValues("sales");
+    record.salesDetail = buildSalesDetail(record.sales, store.inputDraft.packs, record.salesDetail);
   } else {
     record[submitType] = getDraftValues(submitType);
   }
@@ -2838,7 +2813,7 @@ async function submitDailyData() {
   store.dailySubmitted[today] = { ...previousProgress, [submitType]: true };
   store.dailyEditUnlocked[submitType] = false;
 
-  const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(today));
+  const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(today,submitType));
   store.submitLoading = false;
 
   if (!saved) {
@@ -2854,11 +2829,11 @@ async function submitDailyData() {
   }
 
   if (submitType === "sales") {
-    store.inputPage = "stock";
-    showToast("Penjualan tersimpan. Lanjut isi stok.", "success");
+    store.inputPage = canAccess("input_stock") ? "stock" : "sales";
+    showToast(canAccess("input_stock") ? "Penjualan tersimpan. Lanjut isi stok." : "Penjualan tersimpan.", "success");
   } else {
     store.inputPage = "stock";
-    showToast("Stok tersimpan. Absen pulang sudah bisa dipakai.", "success");
+    showToast("Stok tersimpan. Laporan hari ini sudah diperbarui.", "success");
   }
   render();
 }
@@ -3052,85 +3027,9 @@ function getCalendarYearOptions(selectedYear) {
   return Array.from(years).sort((a, b) => b - a);
 }
 
-function startCamera() {
-  const video = document.getElementById("camera-video");
-  if (!video || !navigator.mediaDevices?.getUserMedia) return;
 
-  if (store.cameraStream) {
-    video.srcObject = store.cameraStream;
-    return;
-  }
 
-  navigator.mediaDevices
-    .getUserMedia({
-      video: {
-        facingMode: { ideal: store.cameraFacing },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
-      audio: false,
-    })
-    .then((stream) => {
-      store.cameraStream = stream;
-      video.srcObject = stream;
-      const fallback = document.getElementById("camera-fallback");
-      if (fallback) fallback.style.display = "none";
-    })
-    .catch(() => {
-      const fallback = document.getElementById("camera-fallback");
-      if (fallback) fallback.style.display = "flex";
-    });
-}
 
-function flipCamera() {
-  store.cameraFacing = store.cameraFacing === "user" ? "environment" : "user";
-  closeStream();
-  startCamera();
-}
-
-function capturePhoto() {
-  const video = document.getElementById("camera-video");
-  if (video && video.videoWidth) {
-    const canvas = document.createElement("canvas");
-    const longestSide = Math.max(video.videoWidth, video.videoHeight);
-    const scale = Math.min(1, 640 / longestSide);
-    canvas.width = Math.round(video.videoWidth * scale);
-    canvas.height = Math.round(video.videoHeight * scale);
-    const context = canvas.getContext("2d");
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    store.capturedPhoto = canvas.toDataURL("image/jpeg", 0.52);
-  } else {
-    store.capturedPhoto = null;
-    showToast("Kamera belum siap. Ambil foto ulang.", "error");
-  }
-  closeStream();
-  render();
-}
-
-async function uploadAttendancePhoto(payload) {
-  if (!GAS_PHOTO_UPLOAD_URL) {
-    throw new Error("URL GAS upload foto belum diisi di app.js.");
-  }
-
-  const response = await fetch(GAS_PHOTO_UPLOAD_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ appId: DOKO_APP_ID, ...payload }),
-  });
-  const text = await response.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch (error) {
-    throw new Error("Upload foto berhasil dipanggil, tetapi respons GAS tidak terbaca.");
-  }
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || "Gagal upload foto ke Google Drive.");
-  }
-  return data;
-}
 function updateGasThumbNodes(src, content, isError = false) {
   document.querySelectorAll("[data-gas-thumb-src]").forEach((thumb) => {
     if (thumb.dataset.gasThumbSrc !== src) return;
@@ -3239,75 +3138,22 @@ async function openAttendancePhotoPreview(button) {
   }
   render();
 }
-async function saveAttendance() {
-  const today = isoDate(new Date());
-  if (store.attendanceMode === "out" && !isDailySubmitted(today)) {
-    closeCamera();
-    store.inputPage = getNextRequiredInputPage(today);
-    showToast("Submit penjualan dan stok dulu sebelum absen pulang.", "error");
-    render();
-    return;
-  }
 
-  if (!store.capturedPhoto?.startsWith("data:image/")) {
-    showToast("Ambil foto dulu sebelum simpan absensi.", "error");
-    render();
-    return;
-  }
 
-  const record = store.attendance[today] || { in: null, out: null };
-  const now = new Date();
-  const mode = store.attendanceMode;
-  const time = now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-  const feedback = getAttendanceFeedback(mode, now);
-  showToast("Mengupload foto absensi...", "success");
-  let upload;
-  try {
-    upload = await uploadAttendancePhoto({
-      date: today,
-      mode,
-      time,
-      status: feedback.status,
-      message: feedback.message,
-      photo: store.capturedPhoto,
-    });
-  } catch (error) {
-    showToast(getErrorMessage(error), "error");
-    render();
-    return;
-  }
-
-  record[mode] = {
-    time,
-    photo: upload.photoUrl,
-    photoView: upload.webViewUrl,
-    photoFileId: upload.fileId,
-    status: feedback.status,
-    message: feedback.message,
-  };
-  store.attendance[today] = record;
-
-  const saved = await persistDatabaseWrite(() => dbUpsertAttendance(today));
-  if (!saved) {
-    render();
-    return;
-  }
-
-  closeCamera();
-  store.inputPage = "attendance";
-  showToast("Absensi berhasil disimpan", "success");
-  render();
-}
-function closeCamera() {
-  closeStream();
-  store.attendanceMode = null;
-  store.capturedPhoto = null;
+function calculateOwnerShare(summary, fee = store) {
+  return fee.ownerFeeMode === "percent"
+    ? Math.round(summary.revenue * Number(fee.ownerFeePercent || 0) / 100)
+    : summary.slices * Number(fee.ownerFee ?? 2000);
 }
 
-function closeStream() {
-  if (!store.cameraStream) return;
-  store.cameraStream.getTracks().forEach((track) => track.stop());
-  store.cameraStream = null;
+function ownerFeeLabel(fee = store) {
+  return fee.ownerFeeMode === "percent" ? `${Number(fee.ownerFeePercent)}% penjualan` : `${rupiah(fee.ownerFee)} / slice`;
+}
+
+function ownerFeeFormula(summary, fee = store) {
+  return fee.ownerFeeMode === "percent"
+    ? `${Number(fee.ownerFeePercent)}% x ${rupiah(summary.revenue)} =`
+    : `${summary.slices} slice x ${rupiah(fee.ownerFee)} =`;
 }
 
 function getSummaryForDates(dates, options = {}) {
@@ -3318,11 +3164,11 @@ function getSummaryForDates(dates, options = {}) {
       store.pizzas.forEach((pizza) => {
         const qty = getSalesQuantity(record, pizza.id, salesScope);
         total.slices += qty;
-        total.revenue += qty * pizza.price;
+        total.revenue += getSalesRevenue(record, pizza);
         total.cost += qty * pizza.cost;
       });
       total.expenses += getExpenseTotalForDates([date]);
-      total.ownerShare = total.slices * store.ownerFee;
+      total.ownerShare = calculateOwnerShare(total);
       total.net = total.revenue - total.cost - total.ownerShare - total.expenses;
       total.afterFee = total.revenue - total.ownerShare;
       return total;
@@ -3345,29 +3191,84 @@ function getViewerDates() {
 }
 
 function getSalesQuantity(record, pizzaId, salesScope = "tenant") {
-  if (salesScope === "shift1") return Number(record.salesShift1?.[pizzaId]) || 0;
-  if (salesScope === "shift2") return Number(record.salesShift2?.[pizzaId]) || 0;
   return Number(record.sales?.[pizzaId]) || 0;
+}
+
+function salesPackCounts(details = {}) {
+  return Object.fromEntries(Object.entries(details).map(([id, detail]) => [id, Number(detail.packs) || 0]));
+}
+
+function packSalesDescription(dates, pizza) {
+  let packs = 0, singles = 0;
+  dates.forEach(date => {
+    const record = store.records[date] || {};
+    const detail = record.salesDetail?.[pizza.id] || {};
+    const count = Number(detail.packs) || 0;
+    packs += count;
+    singles += Math.max(0, getSalesQuantity(record, pizza.id) - count * salesPackSize(pizza, detail));
+  });
+  return `${singles} slice eceran · ${packs} loyang`;
+}
+
+function salesPackSize(pizza, detail = {}) { return Number(detail.pack_size || pizza.packSize || pizza.pack_size) || 0; }
+
+function getSalesRevenue(record, pizza) {
+  const qty = getSalesQuantity(record, pizza.id);
+  const detail = record.salesDetail?.[pizza.id];
+  if (!detail || detail.slice_price == null || detail.pack_price == null) return qty * Number(pizza.price || 0);
+  const size = salesPackSize(pizza, detail);
+  const packs = Math.min(Number(detail.packs) || 0, size ? Math.floor(qty / size) : 0);
+  return (qty - packs * size) * Number(detail.slice_price) + packs * Number(detail.pack_price);
+}
+
+function buildSalesDetail(values, packs = {}, previous = {}) {
+  const details = { ...previous };
+  store.pizzas.filter(pizza => pizza.active).forEach(pizza => {
+    const old = previous[pizza.id] || {};
+    const size = salesPackSize(pizza, old);
+    if (!size) return;
+    const count = Math.min(Number(packs[pizza.id]) || 0, Math.floor((values[pizza.id] || 0) / size));
+    details[pizza.id] = { packs: count, pack_size: size,
+      slice_price: Number(old.slice_price ?? pizza.price), pack_price: Number(old.pack_price ?? pizza.packPrice) };
+  });
+  return details;
+}
+
+function adjustPackSale(values, packs, pizza, kind, delta, detail = {}) {
+  const size = salesPackSize(pizza, detail);
+  const count = Number(packs[pizza.id]) || 0;
+  const singles = Math.max(0, (Number(values[pizza.id]) || 0) - count * size);
+  packs[pizza.id] = kind === "pack" ? Math.max(0, count + delta) : count;
+  values[pizza.id] = (kind === "slice" ? Math.max(0, singles + delta) : singles) + packs[pizza.id] * size;
+}
+
+function renderPackSalesRow(pizza, values, packs, details, editDate = "") {
+  const detail = details[pizza.id] || {};
+  const size = salesPackSize(pizza, detail);
+  const count = Number(packs[pizza.id]) || 0;
+  const total = Number(values[pizza.id]) || 0;
+  const singles = Math.max(0, total - count * size);
+  const locked = editDate ? store.adminEdit.saving : isDraftLocked("sales");
+  const slicePrice = Number(detail.slice_price ?? pizza.price);
+  const packPrice = Number(detail.pack_price ?? pizza.packPrice);
+  return `<article class="pack-sales-row ${locked ? "is-locked" : ""}">
+    <div class="pack-sales-heading"><h4>${escapeHtml(pizza.name)}</h4><span>${total} slice</span></div>
+    ${[["slice", "Slice", singles, slicePrice],["pack", "Loyang Besar", count, packPrice]].map(([kind,label,value,price]) => `<div class="pack-sale-option"><div><strong><span class="pack-sale-bullet" aria-hidden="true">•</span>${label}</strong>${price ? `<small>${rupiah(price)}</small>` : ""}</div>
+      <div class="counter" aria-label="${escapeHtml(pizza.name)} ${label}">
+        <button class="counter-btn" type="button" data-pack-counter="${kind}" data-id="${escapeHtml(pizza.id)}" data-date="${editDate}" data-delta="-1" aria-label="Kurangi ${label} ${escapeHtml(pizza.name)}" ${locked ? "disabled" : ""}><span class="material-symbols-outlined">remove</span></button>
+        <span class="count">${value}</span>
+        <button class="counter-btn" type="button" data-pack-counter="${kind}" data-id="${escapeHtml(pizza.id)}" data-date="${editDate}" data-delta="1" aria-label="Tambah ${label} ${escapeHtml(pizza.name)}" ${locked ? "disabled" : ""}><span class="material-symbols-outlined">add</span></button>
+      </div></div>`).join("")}
+  </article>`;
 }
 
 function sumDraft(type) {
   return Object.values(store.inputDraft[type] || {}).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
 }
 
-function sumSalesDraft() {
-  return sumDraft("salesShift1") + sumDraft("salesShift2");
-}
 
-function getCombinedSalesValues(shift1 = {}, shift2 = {}, fallbackTotal = {}) {
-  const hasShiftPayload = Object.keys(shift1 || {}).length > 0 || Object.keys(shift2 || {}).length > 0;
-  return store.pizzas
-    .filter((pizza) => pizza.active || Object.prototype.hasOwnProperty.call(fallbackTotal || {}, pizza.id))
-    .reduce((values, pizza) => {
-      const combined = (Number(shift1?.[pizza.id]) || 0) + (Number(shift2?.[pizza.id]) || 0);
-      values[pizza.id] = hasShiftPayload ? combined : Number(fallbackTotal?.[pizza.id]) || 0;
-      return values;
-    }, {});
-}
+
+function sumSalesDraft() { return sumDraft("sales"); }
 
 function getDraftValues(type) {
   return store.pizzas
@@ -3405,18 +3306,7 @@ function isDailySubmitted(date) {
   return Boolean(progress.sales && progress.stock);
 }
 
-function getNextRequiredInputPage(date) {
-  if (!isSalesSubmitted(date)) return "sales";
-  if (!isStockSubmitted(date)) return "stock";
-  return "attendance";
-}
 
-function getCheckoutHint(date, attendance) {
-  if (!attendance.in) return "Absen masuk dulu";
-  if (!isSalesSubmitted(date)) return "Submit penjualan dulu";
-  if (!isStockSubmitted(date)) return "Submit stok dulu";
-  return "";
-}
 
 function filterDescription(dates) {
   if (dates.length === 1) return formatDate(dates[0]);
@@ -3437,6 +3327,7 @@ function ticketDateDescription(dates) {
 
 function normalizeRoute(path) {
   const route = path.replace(/\/+$/, "") || "/";
+  if (/^\/input\/[a-z0-9-]+$/.test(route)) return "/input";
   if (route === "/") return "/";
   if (route === "/admin") return "/admin";
   if (route === "/input") return "/input";
@@ -3500,7 +3391,7 @@ function getInitials(name) {
 
 function loadAttendanceSettings() {
   try {
-    const saved = localStorage.getItem(ATTENDANCE_SETTINGS_KEY);
+    const saved = localStorage.getItem(tenantStorageKey("attendance_settings"));
     if (!saved) return;
     store.attendanceSettings = normalizeAttendanceSettings(JSON.parse(saved));
   } catch (error) {
@@ -3510,7 +3401,7 @@ function loadAttendanceSettings() {
 
 function saveLocalAttendanceSettings(settings) {
   try {
-    localStorage.setItem(ATTENDANCE_SETTINGS_KEY, JSON.stringify(normalizeAttendanceSettings(settings)));
+    localStorage.setItem(tenantStorageKey("attendance_settings"), JSON.stringify(normalizeAttendanceSettings(settings)));
   } catch (error) {
     console.warn("Attendance settings were not saved locally", error);
   }
@@ -3557,7 +3448,7 @@ function displayClock(value) {
 
 function loadDailyExpenses() {
   try {
-    const saved = localStorage.getItem(DAILY_EXPENSES_KEY);
+    const saved = localStorage.getItem(tenantStorageKey("daily_expenses"));
     store.dailyExpenses = normalizeDailyExpenses(saved ? JSON.parse(saved) : {});
   } catch (error) {
     store.dailyExpenses = {};
@@ -3566,7 +3457,7 @@ function loadDailyExpenses() {
 
 function saveLocalDailyExpenses() {
   try {
-    localStorage.setItem(DAILY_EXPENSES_KEY, JSON.stringify(normalizeDailyExpenses(store.dailyExpenses)));
+    localStorage.setItem(tenantStorageKey("daily_expenses"), JSON.stringify(normalizeDailyExpenses(store.dailyExpenses)));
   } catch (error) {
     console.warn("Daily expenses were not saved locally", error);
   }

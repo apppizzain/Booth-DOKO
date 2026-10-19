@@ -1,0 +1,11 @@
+{
+  "redirects": [
+    { "source": "/", "destination": "/admin", "permanent": false }
+  ],
+  "rewrites": [
+    { "source": "/input/:tenant", "destination": "/index.html" },
+    { "source": "/input", "destination": "/index.html" },
+    { "source": "/admin", "destination": "/index.html" },
+    { "source": "/view", "destination": "/index.html" }
+  ]
+}
