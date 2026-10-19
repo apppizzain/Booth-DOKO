@@ -19,7 +19,7 @@
   --radius: 8px;
   --visible-vh: 100dvh;
   --topbar-height: 50px;
-  --statusbar-space: max(env(safe-area-inset-top, 0px), 23px);
+  --statusbar-space: calc(max(env(safe-area-inset-top, 0px), 23px) + 8px);
   --admin-tabs-height: 76px;
   --admin-tabs-gap: 8px;
 }
