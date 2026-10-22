@@ -189,6 +189,8 @@ document.addEventListener("keydown", handleKeydown);
 document.addEventListener("focusin", handleFocusIn);
 document.addEventListener("focusout", handleFocusOut);
 setInterval(updateTimers, 1000);
+setInterval(() => refreshStaffStock(), 5000);
+window.addEventListener("focus", () => { if (store.inputPage === "view_stock") refreshStaffStock(true); });
 
 updateVisibleViewport();
 render();
@@ -2137,6 +2139,7 @@ function metric(label, value, extra = "", formula = "") {
 function handleClick(event) {
   if (handleAccessClick(event)) return;
   if (!hasAccessSession()) return;
+  if (event.target.closest("[data-refresh-staff-stock]")) { refreshStaffStock(true); return; }
   if (!event.target.closest("[data-tenant-picker]")) closeTenantPicker();
   if (event.target.closest('[data-tenant-toggle][aria-disabled="true"]')) { event.preventDefault(); return; }
   if (event.target.closest("[data-retry-tenant]")) { initializeDatabase(); return; }
@@ -2270,6 +2273,7 @@ function handleClick(event) {
     if (isAccessStaff() && !staffPages().some(([page])=>page===inputPage)) return;
     store.inputPage = inputPage;
     render();
+    if (inputPage === "view_stock") refreshStaffStock(true);
     return;
   }
 
@@ -2888,9 +2892,9 @@ async function submitDailyData() {
   store.dailyEditUnlocked[submitType] = false;
 
   const saved = await persistDatabaseWrite(() => dbUpsertDailyRecord(today,submitType));
-  store.submitLoading = false;
 
   if (!saved) {
+    store.submitLoading = false;
     if (previousRecord) {
       store.records[today] = previousRecord;
     } else {
@@ -2901,6 +2905,9 @@ async function submitDailyData() {
     render();
     return;
   }
+
+  if (isAccessStaff() && canAccess("view_stock")) await refreshStaffStock(true, true);
+  store.submitLoading = false;
 
   if (submitType === "sales") {
     store.inputPage = canAccess("input_stock") ? "stock" : "sales";

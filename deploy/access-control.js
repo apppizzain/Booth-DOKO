@@ -3,6 +3,7 @@
 const access = {
   session: null, actor: null, pin: "", loading: false, error: "", refresh: null, generation: 0,
   accounts: [], accountsLoading: false, accountsError: "", formOpen: false,
+  stockRequest: null, stockRefreshAt: 0, stockRefreshError: "",
   form: { id: null, name: "", pin: "", active: true, timer: false, permissions: {} }, saving: false,
 };
 const ACCESS_RIGHTS = [
@@ -68,6 +69,7 @@ function clearAccessSession(message = "") {
   store.tenants.forEach((tenant) => { try { localStorage.removeItem(`${tenant.data_app_id}:daily_expenses`); } catch {} });
   access.session = null; access.actor = null; access.pin = ""; access.error = message;
   access.accounts = []; access.accountsLoading = false; access.accountsError = ""; access.formOpen = false;
+  access.stockRequest = null; access.stockRefreshAt = 0; access.stockRefreshError = "";
   access.form = { id: null, name: "", pin: "", active: true, timer: false, permissions: {} };
   store.adminUnlocked = false; store.dbReady = false; store.tenantResolved = false;
   store.dbLoading = false; store.dailyEditUnlocked = {sales:false,stock:false};
@@ -105,24 +107,63 @@ function renderAccessLogin() {
 
 async function loadStaffWorkspace() {
   const generation = access.generation;
+  const tenantId = currentTenant.id;
   store.records = {}; store.pizzas = []; store.dailyExpenses = {}; store.attendance = {}; store.dailySubmitted = {};
   store.inputDraft = { sales: {}, stock: {}, refill: {} }; store.ownerFee = 0;
   store.ownerFeeMode = "fixed"; store.ownerFeePercent = 0; store.ownerFeeDraft = null;
   if (!store.tenants.length) { store.inputPage = "timer"; return; }
   const result = await dbRequest("rpc/doko_access_workspace", { method: "POST", body: { p_tenant_id: currentTenant.id } });
-  if (generation !== access.generation) throw Error("Sesi telah berubah.");
+  if (generation !== access.generation || tenantId !== currentTenant.id) throw Error("Sesi telah berubah.");
+  applyStaffWorkspace(result);
+  resetInputDraftDates();
+  ensureStaffPage();
+}
+
+function applyStaffWorkspace(result) {
+  store.records = {}; store.dailySubmitted = {};
   store.pizzas = result.pizzas.map((pizza) => ({ ...pizza, cost: 0, price: Number(pizza.price) || 0,
     packSize: Number(pizza.pack_size) || 0, packPrice: Number(pizza.pack_price) || 0, image: pizza.image || PIZZA_IMAGES.veggie }));
   result.records.forEach((row) => {
     const stock = splitStockPayload(row.stock);
-    store.records[row.record_date] = { sales: splitSalesPayload(row.sales).total, salesDetail: row.sales_detail || {}, stock: stock.stock, refill: row.refill || stock.refill };
+    store.records[row.record_date] = { sales: splitSalesPayload(row.sales).total, salesDetail: row.sales_detail || {}, stock: stock.stock, refill: row.refill || stock.refill, stockBalance: row.stock_balance };
     store.dailySubmitted[row.record_date] = {
       sales: row.sales?.__submitted === true || Object.keys(store.records[row.record_date].sales).length > 0,
       stock: row.stock?.__submitted === true || Object.keys(stock.stock).length > 0,
     };
   });
-  resetInputDraftDates();
-  ensureStaffPage();
+  access.stockRefreshAt = Date.now(); access.stockRefreshError = "";
+}
+
+function refreshStaffStock(force = false, afterWrite = false) {
+  if (!isAccessStaff() || !hasAccessSession() || !store.tenantResolved || !canAccess("view_stock") || store.dbLoading || (store.submitLoading && !afterWrite) || store.pendingWrites) return Promise.resolve(false);
+  if (!force && (store.inputPage !== "view_stock" || document.visibilityState === "hidden" || Date.now() - access.stockRefreshAt < 5000)) return Promise.resolve(false);
+  const generation = access.generation, tenantId = currentTenant.id;
+  if (access.stockRequest?.generation === generation && access.stockRequest?.tenantId === tenantId) {
+    return afterWrite ? access.stockRequest.promise.then(() => refreshStaffStock(true, true)) : access.stockRequest.promise;
+  }
+  const task = { generation, tenantId, promise: null };
+  access.stockRequest = task; access.stockRefreshAt = Date.now();
+  const stillCurrent = () => generation === access.generation && tenantId === currentTenant.id && isAccessStaff();
+  task.promise = (async () => {
+    try {
+      const result = await dbRequest("rpc/doko_access_workspace", { method: "POST", body: { p_tenant_id: tenantId } });
+      if (!stillCurrent()) return false;
+      if (!afterWrite && (store.submitLoading || store.pendingWrites)) return false;
+      applyStaffWorkspace(result);
+      render();
+      return true;
+    } catch (error) {
+      if (stillCurrent()) { access.stockRefreshError = "Stok belum berhasil diperbarui. Menampilkan data terakhir."; render(); }
+      return false;
+    } finally { if (access.stockRequest === task) access.stockRequest = null; }
+  })();
+  return task.promise;
+}
+
+function staffStockSnapshot(date) {
+  const lastDate = Object.keys(store.records).filter(day => day <= date && store.records[day].stockBalance && typeof store.records[day].stockBalance === "object").sort().pop();
+  if (lastDate) return store.records[lastDate].stockBalance;
+  return store.records[date]?.stock || {};
 }
 
 function staffPages() {
@@ -157,14 +198,17 @@ function renderStaffPortal() {
 function renderStaffReadOnly(kind) {
   const dates = getViewerDates();
   const chosen = kind === "stock" ? dates.slice(-1) : dates;
-  const hasData = chosen.some((date) => Object.keys(store.records[date]?.[kind] || {}).length > 0 || getDailyProgress(date)[kind]);
-  const totals = store.pizzas.map((pizza) => ({ pizza, qty: chosen.reduce((sum,date) => sum + (Number(store.records[date]?.[kind]?.[pizza.id]) || 0),0) }));
+  const stockSnapshot = kind === "stock" ? staffStockSnapshot(chosen[0]) : null;
+  const hasData = kind === "stock" ? Object.keys(stockSnapshot).length > 0 : chosen.some((date) => Object.keys(store.records[date]?.[kind] || {}).length > 0 || getDailyProgress(date)[kind]);
+  const totals = store.pizzas.map((pizza) => ({ pizza, qty: kind === "stock" ? Number(stockSnapshot[pizza.id]) || 0 : chosen.reduce((sum,date) => sum + (Number(store.records[date]?.[kind]?.[pizza.id]) || 0),0) }));
   const total = totals.reduce((sum,item) => sum+item.qty,0);
   return `<section class="panel viewer-filter-panel stack access-read-filter"><div class="segmented" role="tablist" aria-label="Filter tanggal staff">${viewerFilterButton("today","Hari Ini")}${viewerFilterButton("yesterday","Kemarin")}${viewerFilterButton("custom","Custom")}</div>${store.viewerFilter === "custom" ? renderCalendarRange() : ""}</section>
+    ${kind === "stock" && access.stockRefreshError ? `<p class="access-stock-error" role="status">${escapeHtml(access.stockRefreshError)} <button type="button" data-refresh-staff-stock>Coba lagi</button></p>` : ""}
     ${hasData ? `<section class="panel access-read-report" aria-label="${kind === "sales" ? "Ringkasan penjualan" : "Ringkasan stok pizza"}">
       <header class="access-read-heading"><div class="access-read-title"><span class="access-read-icon material-symbols-outlined" aria-hidden="true">${kind === "sales" ? "point_of_sale" : "inventory_2"}</span><div><span class="access-eyebrow">HANYA LIHAT</span><h3>${kind === "sales" ? "Penjualan" : "Stok pizza"}</h3></div></div><div class="access-read-total"><strong>${total}</strong><span>slice</span></div></header>
       <div class="access-read-meta"><span><span class="material-symbols-outlined" aria-hidden="true">storefront</span>${escapeHtml(tenantLabel())}</span><span><span class="material-symbols-outlined" aria-hidden="true">calendar_today</span>${ticketDateDescription(chosen)}</span></div>
       <div class="access-read-list">${totals.map(({pizza,qty}) => `<div class="access-read-row"><span class="access-read-product-icon" aria-hidden="true">${escapeHtml(getInitials(pizza.name))}</span><span class="access-read-product-name">${escapeHtml(pizza.name)}</span><span class="access-read-quantity ${qty === 0 ? "is-zero" : ""}"><strong>${qty}</strong><small>slice</small></span></div>`).join("")}</div>
+      ${kind === "stock" ? '<p class="access-stock-note"><span class="material-symbols-outlined" aria-hidden="true">sync</span>Stok mengikuti refill dan penjualan yang sudah dikirim.</p>' : ""}
     </section>` : renderTenantEmptyState(chosen,kind)}`;
 }
 
