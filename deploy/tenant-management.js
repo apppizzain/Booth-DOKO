@@ -305,7 +305,7 @@ async function loadCombinedTenants() {
       dbSelect("doko_settings", `app_id=eq.${appId}&select=owner_fee,owner_fee_mode,owner_fee_percent,staff_fee_per_slice&limit=1`),
       dbSelect("doko_pizzas", `app_id=eq.${appId}&select=id,name,cost,price,pack_size,pack_price,active,image,sort_order`),
       dbSelect("doko_daily_records", `app_id=eq.${appId}&select=record_date,sales,sales_detail,stock,submitted_at`),
-      dbSelect("doko_daily_expenses", `app_id=eq.${appId}&select=record_date,amount`),
+      dbSelect("doko_daily_expenses", `app_id=eq.${appId}&select=id,record_date,note,amount`),
       dbSelect("doko_cash_reports", `app_id=eq.${appId}&select=record_date,opening_cash,closing_cash,qris,expenses`),
     ]);
     return { tenant, ownerFee: Number(settings[0]?.owner_fee ?? 2000),
@@ -394,5 +394,9 @@ function renderCombinedTenants() {
     <p class="combined-footnote">${isStaff ? "Penghasilan mengikuti pengaturan staff masing-masing tenant." : "Bagi hasil mengikuti fee masing-masing tenant."}</p>
   </section>
   ${!isReport ? store.combinedTenants.map(snapshot => renderAdminCashReports((snapshot.cashReports || []).filter(row => selectedDates.has(row.record_date)), date => summaryForTenant(snapshot,[date]).revenue, snapshot.tenant.staff_name || "Putra")).join("") : ""}
+  ${!isReport ? renderExpenseList(dates,store.combinedTenants.flatMap(snapshot => [
+    ...snapshot.expenses.filter(row => selectedDates.has(row.record_date)).map(row => ({id:row.id,date:row.record_date,note:row.note,amount:Number(row.amount)||0,readOnly:true,tenantName:staffTenantLabel(snapshot.tenant)})),
+    ...(snapshot.cashReports || []).filter(row => selectedDates.has(row.record_date)).flatMap(row => (row.expenses || []).map((expense,index) => ({id:`cash:${snapshot.tenant.id}:${row.record_date}:${index}`,date:row.record_date,note:expense.note,amount:Number(expense.amount)||0,fromCash:true,tenantName:staffTenantLabel(snapshot.tenant)}))),
+  ]).sort((a,b) => b.date.localeCompare(a.date))) : ""}
   </div>`;
 }

@@ -269,9 +269,9 @@ function changeCashExpense(index) {
   else if(Number.isInteger(Number(index)) && Number(index)>=0) rows.splice(Number(index),1);
   render();
 }
-function renderPutraCashReceipt(report) {
+function renderPutraCashReceipt(report, options = {}) {
   if(!report) return '<p class="cash-empty">Data kas belum diisi. Pilih Edit Penjualan untuk melengkapi.</p>';
-  return `<div class="cash-receipt"><h4>Kas Harian</h4><div class="cash-receipt-grid">${[["Kas awal",report.opening_cash],["Kas akhir",report.closing_cash],["QRIS",report.qris],["Pengeluaran",cashExpenseTotal(report)]].map(([label,value]) => `<div><span>${label}</span><strong>${rupiah(value)}</strong></div>`).join("")}</div>${report.expenses?.length ? `<div class="cash-receipt-expenses">${report.expenses.map(row => `<div><span>${escapeHtml(row.note)}</span><strong>${rupiah(row.amount)}</strong></div>`).join("")}</div>` : ""}</div>`;
+  return `<div class="cash-receipt"><h4>Kas Harian</h4><div class="cash-receipt-grid">${[["Kas awal",report.opening_cash],["Kas akhir",report.closing_cash],["QRIS",report.qris],["Pengeluaran",cashExpenseTotal(report)]].map(([label,value]) => `<div><span>${label}</span><strong>${rupiah(value)}</strong></div>`).join("")}</div>${options.showExpenseDetails !== false && report.expenses?.length ? `<div class="cash-receipt-expenses">${report.expenses.map(row => `<div><span>${escapeHtml(row.note)}</span><strong>${rupiah(row.amount)}</strong></div>`).join("")}</div>` : ""}</div>`;
 }
 function cashReconciliation(report,revenue) {
   const turnover=Number(report.closing_cash)+Number(report.qris)-Number(report.opening_cash)+cashExpenseTotal(report);
@@ -281,8 +281,8 @@ function cashDifferenceLabel(difference) { return difference===0 ? "Sesuai" : `$
 function renderAdminCashReports(reports, revenueForDate, label="Putra") {
   if(!isAccessAdmin() || store.adminView!=="dashboard" || !reports.length) return "";
   return `<section class="panel admin-cash-panel" aria-label="Rekonsiliasi kas"><div class="cash-heading"><span class="material-symbols-outlined" aria-hidden="true">account_balance_wallet</span><div><h3>Kas ${escapeHtml(label)}</h3><p>Rekonsiliasi penjualan harian</p></div></div>${reports.map(report => {
-    const revenue=revenueForDate(report.record_date), {turnover,difference}=cashReconciliation(report,revenue);
-    return `<details class="cash-day" ${reports.length===1 ? "open" : ""}><summary><span>${formatDate(report.record_date)}</span><strong class="cash-difference ${difference>0 ? "is-over" : difference<0 ? "is-short" : "is-matched"}">${cashDifferenceLabel(difference)}</strong><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary><div class="cash-day-body">${renderPutraCashReceipt(report)}<div class="cash-comparison"><div><span>Omzet dari kas</span><strong>${rupiah(turnover)}</strong></div><div><span>Omzet penjualan</span><strong>${rupiah(revenue)}</strong></div></div><p class="cash-formula">Kas akhir + QRIS − kas awal + pengeluaran</p></div></details>`;
+    const revenue=revenueForDate(report.record_date), {difference}=cashReconciliation(report,revenue);
+    return `<details class="cash-day" ${reports.length===1 ? "open" : ""}><summary><span>${formatDate(report.record_date)}</span><strong class="cash-difference ${difference>0 ? "is-over" : difference<0 ? "is-short" : "is-matched"}">${cashDifferenceLabel(difference)}</strong><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary><div class="cash-day-body">${renderPutraCashReceipt(report,{showExpenseDetails:false})}</div></details>`;
   }).join("")}</section>`;
 }
 

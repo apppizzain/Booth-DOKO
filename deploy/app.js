@@ -887,7 +887,7 @@ function renderAdminQuickPanels(date) {
   const refillOpen = store.adminQuickPanel === "refill";
   const expenseOpen = store.adminQuickPanel === "expense";
   const refillTotal = getRefillTotalForDate(date);
-  const expenseTotal = getExpenseTotalForDates([date]);
+  const expenseTotal = getDisplayExpensesForDates([date]).reduce((sum,expense) => sum + expense.amount,0);
 
   return `
     <section class="admin-quick-panels" aria-label="Aksi harian admin">
@@ -1117,9 +1117,14 @@ function formatStockDifference(diff) {
   return diff > 0 ? `Kurang ${amount} slice` : `Lebih ${amount} slice`;
 }
 
-function renderExpenseList(dates) {
-  const expenses = getExpensesForDates(dates);
+function renderExpenseList(dates, suppliedExpenses) {
+  const expenses = suppliedExpenses || getDisplayExpensesForDates(dates);
   const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const groups = new Map();
+  expenses.forEach(expense => {
+    if (!groups.has(expense.date)) groups.set(expense.date,[]);
+    groups.get(expense.date).push(expense);
+  });
   return `
     <section class="panel admin-list-panel daily-expense-list-panel">
       <div class="admin-list-head expense">
@@ -1127,29 +1132,28 @@ function renderExpenseList(dates) {
           <h3>Daftar Pengeluaran</h3>
           <p>${ticketDateDescription(dates)}</p>
         </div>
-        <span>${rupiah(total)}</span>
+        <span class="expense-header-total"><small>Total pengeluaran</small><strong>${rupiah(total)}</strong></span>
       </div>
       <div class="daily-expense-list">
         ${
           expenses.length
-            ? expenses
-                .map(
+            ? [...groups].map(([date,rows]) => `<section class="daily-expense-day" aria-label="Pengeluaran ${formatDate(date)}"><header class="daily-expense-date"><time datetime="${date}">${formatDate(date)}</time><strong>${rupiah(rows.reduce((sum,row) => sum+row.amount,0))}</strong></header>${rows.map(
                   (expense) => `
                     <article class="daily-expense-row">
                       <div>
                         <h4>${escapeHtml(expense.note)}</h4>
-                        <p>${formatDate(expense.date)}</p>
+                        ${expense.tenantName ? `<p>${escapeHtml(expense.tenantName)}</p>` : ""}
                       </div>
                       <div class="daily-expense-actions">
                         <strong>${rupiah(expense.amount)}</strong>
-                        <button type="button" data-delete-daily-expense="${escapeHtml(expense.id)}" data-date="${expense.date}" aria-label="Hapus pengeluaran ${escapeHtml(expense.note)}">
+                        ${expense.fromCash ? '<span class="expense-cash-badge">Kas</span>' : expense.readOnly ? "" : `<button type="button" data-delete-daily-expense="${escapeHtml(expense.id)}" data-date="${expense.date}" aria-label="Hapus pengeluaran ${escapeHtml(expense.note)}">
                           <span class="material-symbols-outlined">close</span>
-                        </button>
+                        </button>`}
                       </div>
                     </article>
                   `
                 )
-                .join("")
+                .join("")}</section>`).join("")
             : `<p class="muted daily-expense-empty">Belum ada pengeluaran.</p>`
         }
       </div>
@@ -3644,6 +3648,14 @@ function getExpensesForDates(dates) {
 
 function getExpenseTotalForDates(dates) {
   return getExpensesForDates(dates).reduce((sum, expense) => sum + expense.amount, 0);
+}
+
+// Merge only for display; profit already adds cash expenses separately.
+function getDisplayExpensesForDates(dates) {
+  const cashExpenses = dates.flatMap(date => (store.cashReports[date]?.expenses || []).map((expense,index) => ({
+    id:`cash:${date}:${index}`, date, note:expense.note, amount:Number(expense.amount) || 0, fromCash:true,
+  })));
+  return [...getExpensesForDates(dates),...cashExpenses].sort((a,b) => b.date.localeCompare(a.date));
 }
 
 function getAttendanceFeedback(type, date) {
