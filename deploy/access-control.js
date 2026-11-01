@@ -75,6 +75,7 @@ function clearAccessSession(message = "") {
   store.dbLoading = false; store.dailyEditUnlocked = {sales:false,stock:false};
   store.tenants = []; store.tenantSelection = "";
   store.records = {}; store.pizzas = []; store.attendance = {}; store.dailyExpenses = {}; store.combinedTenants = [];
+  store.cashReports = {};
   store.staffFeePerSlice = null;
   store.inputDraft = { sales: {}, stock: {}, refill: {} }; store.dailySubmitted = {};
   store.inputDate = ""; store.inputDraftDate = ""; store.inputDrafts = {};
@@ -110,6 +111,7 @@ async function loadStaffWorkspace() {
   const generation = access.generation;
   const tenantId = currentTenant.id;
   store.records = {}; store.pizzas = []; store.dailyExpenses = {}; store.attendance = {}; store.dailySubmitted = {};
+  store.cashReports = {};
   store.inputDraft = { sales: {}, stock: {}, refill: {} }; store.ownerFee = 0;
   store.ownerFeeMode = "fixed"; store.ownerFeePercent = 0; store.ownerFeeDraft = null;
   store.staffFeePerSlice = null;
@@ -123,6 +125,7 @@ async function loadStaffWorkspace() {
 
 function applyStaffWorkspace(result) {
   store.records = {}; store.dailySubmitted = {};
+  store.cashReports = Object.fromEntries((result.cash_reports || []).map(row => [row.record_date,row]));
   store.pizzas = result.pizzas.map((pizza) => ({ ...pizza, cost: 0, price: Number(pizza.price) || 0,
     packSize: Number(pizza.pack_size) || 0, packPrice: Number(pizza.pack_price) || 0, image: pizza.image || PIZZA_IMAGES.veggie }));
   result.records.forEach((row) => {
@@ -201,6 +204,7 @@ function renderStaffSalesReceipt() {
     <p class="staff-receipt-meta">${escapeHtml(tenantLabel())}<span>·</span>${formatDate(date)}</p>
     <div class="staff-receipt-total"><div><span>Total terjual</span><strong>${total}<small>slice</small></strong></div><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span></div>
     <div class="staff-receipt-list">${rows.map(({pizza,qty,description}) => `<div class="staff-receipt-row"><span class="access-read-product-icon" aria-hidden="true">${escapeHtml(getInitials(pizza.name))}</span><div><strong>${escapeHtml(pizza.name)}</strong>${description ? `<small>${escapeHtml(description)}</small>` : ""}</div><span class="staff-receipt-qty">${qty}<small>slice</small></span></div>`).join("") || '<p class="staff-receipt-empty">Penjualan tersimpan dengan jumlah 0 slice.</p>'}</div>
+    ${canInputCash() ? renderPutraCashReceipt(store.cashReports[date]) : ""}
     <div class="staff-receipt-actions"><button class="btn secondary full" type="button" data-edit-staff-sales><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit Penjualan</button>${canAccess("input_stock") ? '<button class="staff-receipt-next" type="button" data-input-page="stock">Lanjut input stok<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button>' : ''}</div>
   </section>`;
 }
@@ -212,9 +216,74 @@ function editStaffSales(cancel = false) {
   if (!isSalesSubmitted(date) || !record) return;
   store.inputDraft.sales = { ...record.sales };
   store.inputDraft.packs = salesPackCounts(record.salesDetail);
+  store.inputDraft.cash = cashDraft(store.cashReports[date]);
   store.dailyEditUnlocked.sales = !cancel;
   store.inputPage = "sales";
   render();
+}
+
+function canInputCash() {
+  return isAccessStaff() && access.actor?.cash_reporting === true && canAccess("input_sales");
+}
+
+function cashDraft(report) {
+  return { opening_cash: report?.opening_cash == null ? "" : String(report.opening_cash), closing_cash: report?.closing_cash == null ? "" : String(report.closing_cash), qris: report?.qris == null ? "" : String(report.qris), expenses: (report?.expenses || []).map(row => ({note:row.note,amount:String(row.amount)})) };
+}
+function cashExpenseTotal(report) { return (report?.expenses || []).reduce((sum,row) => sum + (Number(row.amount) || 0),0); }
+function collectCashPayload(draft) {
+  const money = (value,label,minimum=0) => {
+    if (!/^\d+$/.test(String(value ?? "")) || !Number.isSafeInteger(Number(value)) || Number(value)<minimum || Number(value)>1000000000) throw new Error(`Isi ${label} dengan nominal yang valid${minimum ? " lebih dari 0" : "; isi 0 bila tidak ada"}.`);
+    return Number(value);
+  };
+  const result = {opening_cash:money(draft?.opening_cash,"kas awal"),closing_cash:money(draft?.closing_cash,"kas akhir"),qris:money(draft?.qris,"QRIS"),expenses:[]};
+  if (!Array.isArray(draft?.expenses) || draft.expenses.length>50) throw new Error("Maksimal 50 pengeluaran per hari.");
+  result.expenses = draft.expenses.map(row => {
+    const note = String(row.note || "").trim();
+    if (!note || note.length>200) throw new Error("Isi keterangan setiap pengeluaran (maksimal 200 karakter).");
+    return {note,amount:money(row.amount,"pengeluaran",1)};
+  });
+  if(cashExpenseTotal(result)>1000000000) throw new Error("Total pengeluaran melebihi batas nominal.");
+  return result;
+}
+function renderPutraCashForm() {
+  const draft = store.inputDraft.cash || cashDraft();
+  const disabled = store.submitLoading || isDraftLocked("sales") ? "disabled" : "";
+  return `<section class="panel cash-form" aria-label="Kas harian"><div class="cash-heading"><span class="material-symbols-outlined" aria-hidden="true">account_balance_wallet</span><div><h3>Kas Harian</h3><p>Isi nominal tunai dan QRIS hari ini.</p></div></div><div class="cash-fields">${[["opening_cash","Kas awal"],["closing_cash","Kas akhir"],["qris","QRIS"]].map(([key,label]) => `<label>${label}<span class="cash-money"><span>Rp</span><input aria-label="${label}" data-cash-field="${key}" type="text" inputmode="numeric" maxlength="10" placeholder="0" value="${escapeHtml(draft[key])}" ${disabled}></span></label>`).join("")}</div><div class="cash-expense-heading"><h4>Pengeluaran</h4><button class="cash-add" type="button" data-add-cash-expense ${disabled}><span aria-hidden="true">+</span> Tambah</button></div><div class="cash-expense-list">${draft.expenses.map((row,index) => `<div class="cash-expense-row"><input aria-label="Keterangan pengeluaran ${index+1}" data-cash-expense="note" data-cash-index="${index}" placeholder="Keterangan" maxlength="200" value="${escapeHtml(row.note)}" ${disabled}><span class="cash-money"><span>Rp</span><input aria-label="Nominal pengeluaran ${index+1}" data-cash-expense="amount" data-cash-index="${index}" inputmode="numeric" maxlength="10" placeholder="0" value="${escapeHtml(row.amount)}" ${disabled}></span><button type="button" class="cash-remove" data-remove-cash-expense="${index}" aria-label="Hapus pengeluaran ${index+1}" ${disabled}>×</button></div>`).join("") || '<p class="cash-empty">Belum ada pengeluaran.</p>'}</div></section>`;
+}
+function handleCashInput(event) {
+  const target=event.target, field=target.dataset?.cashField, expense=target.dataset?.cashExpense;
+  if(!field && !expense) return false;
+  if(!canInputCash() || store.inputPage!=="sales" || store.submitLoading || isDraftLocked("sales")) return true;
+  const draft=store.inputDraft.cash;
+  if(field && ["opening_cash","closing_cash","qris"].includes(field)) draft[field]=target.value=target.value.replace(/\D/g,"");
+  if(expense && ["note","amount"].includes(expense)) {
+    const row=draft.expenses[Number(target.dataset.cashIndex)];
+    if(row) row[expense]=target.value=expense==="amount" ? target.value.replace(/\D/g,"") : target.value;
+  }
+  return true;
+}
+function changeCashExpense(index) {
+  if(!canInputCash() || store.inputPage!=="sales" || store.submitLoading || isDraftLocked("sales")) return;
+  const rows=store.inputDraft.cash.expenses;
+  if(index===undefined) { if(rows.length>=50) return showToast("Maksimal 50 pengeluaran per hari."); rows.push({note:"",amount:""}); }
+  else if(Number.isInteger(Number(index)) && Number(index)>=0) rows.splice(Number(index),1);
+  render();
+}
+function renderPutraCashReceipt(report) {
+  if(!report) return '<p class="cash-empty">Data kas belum diisi. Pilih Edit Penjualan untuk melengkapi.</p>';
+  return `<div class="cash-receipt"><h4>Kas Harian</h4><div class="cash-receipt-grid">${[["Kas awal",report.opening_cash],["Kas akhir",report.closing_cash],["QRIS",report.qris],["Pengeluaran",cashExpenseTotal(report)]].map(([label,value]) => `<div><span>${label}</span><strong>${rupiah(value)}</strong></div>`).join("")}</div>${report.expenses?.length ? `<div class="cash-receipt-expenses">${report.expenses.map(row => `<div><span>${escapeHtml(row.note)}</span><strong>${rupiah(row.amount)}</strong></div>`).join("")}</div>` : ""}</div>`;
+}
+function cashReconciliation(report,revenue) {
+  const turnover=Number(report.closing_cash)+Number(report.qris)-Number(report.opening_cash)+cashExpenseTotal(report);
+  return {turnover,difference:turnover-revenue};
+}
+function cashDifferenceLabel(difference) { return difference===0 ? "Sesuai" : `${difference>0 ? "+" : "−"}${rupiah(Math.abs(difference))}`; }
+function renderAdminCashReports(reports, revenueForDate, label="Putra") {
+  if(!isAccessAdmin() || store.adminView!=="dashboard" || !reports.length) return "";
+  return `<section class="panel admin-cash-panel" aria-label="Rekonsiliasi kas"><div class="cash-heading"><span class="material-symbols-outlined" aria-hidden="true">account_balance_wallet</span><div><h3>Kas ${escapeHtml(label)}</h3><p>Rekonsiliasi penjualan harian</p></div></div>${reports.map(report => {
+    const revenue=revenueForDate(report.record_date), {turnover,difference}=cashReconciliation(report,revenue);
+    return `<details class="cash-day" ${reports.length===1 ? "open" : ""}><summary><span>${formatDate(report.record_date)}</span><strong class="cash-difference ${difference>0 ? "is-over" : difference<0 ? "is-short" : "is-matched"}">${cashDifferenceLabel(difference)}</strong><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary><div class="cash-day-body">${renderPutraCashReceipt(report)}<div class="cash-comparison"><div><span>Omzet dari kas</span><strong>${rupiah(turnover)}</strong></div><div><span>Omzet penjualan</span><strong>${rupiah(revenue)}</strong></div></div><p class="cash-formula">Kas akhir + QRIS − kas awal + pengeluaran</p></div></details>`;
+  }).join("")}</section>`;
 }
 
 function renderStaffNavigation() {
@@ -311,6 +380,9 @@ async function saveAccessAccount(account = null) {
 }
 
 function handleAccessClick(event) {
+  if (event.target.closest("[data-add-cash-expense]")) { changeCashExpense(); return true; }
+  const removeCash = event.target.closest("[data-remove-cash-expense]");
+  if (removeCash) { changeCashExpense(Number(removeCash.dataset.removeCashExpense)); return true; }
   if (event.target.closest("[data-edit-staff-sales]")) { editStaffSales(); return true; }
   if (event.target.closest("[data-cancel-staff-sales]")) { editStaffSales(true); return true; }
   if (event.target.closest("[data-access-login]")) { loginAccess(); return true; }

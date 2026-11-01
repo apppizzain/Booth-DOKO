@@ -5021,3 +5021,68 @@ body.pin-keyboard-active .admin-pin-screen {
 .attendance-btn:disabled > .material-symbols-outlined {
   color: #c95a69;
 }
+
+/* Compact cash cards, using the application's red and blush palette. */
+.cash-form,.admin-cash-panel { padding:0; overflow:hidden; border:1px solid #f0cbd2; border-radius:16px; background:#fff; box-shadow:0 8px 24px rgba(159,8,32,.055); }
+.cash-heading { display:flex; align-items:center; gap:11px; margin:0; padding:17px 18px; background:linear-gradient(115deg,var(--red-deep),#d7183b 76%,#e3354e); color:#fff; }
+.cash-heading > .material-symbols-outlined { display:grid; place-items:center; width:42px; height:42px; flex-shrink:0; color:#fff; background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.2); border-radius:12px; font-size:23px; }
+.cash-heading h3 { margin:0; font-size:20px; line-height:1.2; color:#fff; }
+.cash-heading p { margin:5px 0 0; font-size:11px; line-height:1.5; color:#ffdae1; }
+.cash-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:17px 16px 0; }
+.cash-fields label { min-width:0; font-size:11px; color:#887075; font-weight:650; letter-spacing:.15px; }
+.cash-fields label:last-child { grid-column:1 / -1; }
+.cash-money { display:flex; align-items:center; min-width:0; border:1px solid #efdee2; border-radius:11px; background:#fff8fa; transition:border-color .15s,box-shadow .15s; }
+.cash-fields .cash-money { margin-top:7px; }
+.cash-money > span { margin-left:11px; color:#b5576b; background:#fce9ee; border-radius:5px; padding:3px 5px; font-size:10px; font-weight:700; }
+.cash-money input,.cash-expense-row > input { min-width:0; width:100%; box-sizing:border-box; border:0; background:transparent; padding:13px 10px; font:inherit; font-size:17px; font-weight:650; color:#78142a; outline:none; border-radius:inherit; }
+.cash-money input::placeholder { color:#c3a5ad; font-weight:500; }
+.cash-money:focus-within,.cash-expense-row > input:focus { border-color:#d7193f; box-shadow:0 0 0 3px #fff0f3; background:#fff; }
+.cash-fields label:last-child .cash-money { background:#fff; border-style:dashed; }
+.cash-expense-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:19px 16px 0; padding-top:14px; border-top:1px solid #f2e5e8; }
+.cash-expense-heading h4,.cash-receipt h4 { margin:0; color:#9f1230; font-size:13px; font-weight:750; }
+.cash-add,.cash-remove { border:0; background:#fce9ee; color:var(--red-deep); border-radius:9px; padding:8px 11px; cursor:pointer; font:inherit; font-weight:650; font-size:11px; transition:background .15s; }
+.cash-add:hover,.cash-remove:hover { background:#f8d5df; }
+.cash-add > span { font-size:15px; vertical-align:-1px; margin-right:2px; }
+.cash-expense-list { margin:12px 16px 16px; }
+.cash-expense-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(100px,.85fr) 30px; gap:7px; margin-top:9px; padding:9px; border:1px solid #f2e3e7; border-radius:12px; background:#fffafb; align-items:center; }
+.cash-expense-row > input { border:1px solid #efdee2; border-radius:9px; font-size:12px; font-weight:500; background:#fff; padding:11px 8px; }
+.cash-expense-row .cash-money { background:#fff; }
+.cash-expense-row .cash-money input { font-size:12px; padding:11px 7px; }
+.cash-expense-row .cash-money > span { margin-left:7px; background:transparent; padding:0; }
+.cash-remove { padding:5px; font-size:20px; line-height:1; }
+.cash-empty { color:#ab8690; font-size:11px; margin:0; padding:15px 12px; text-align:center; border:1px dashed #edd5dc; border-radius:10px; background:#fffbfc; }
+.cash-receipt { border-top:1px solid #f1e2e5; margin-top:16px; padding-top:15px; }
+.cash-receipt-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:12px; }
+.cash-receipt-grid div { display:flex; min-width:0; flex-direction:column; gap:6px; padding:12px; border:1px solid #f2e2e6; border-radius:11px; background:#fff9fa; }
+.cash-receipt-grid span { color:#a18189; font-size:10px; }
+.cash-receipt-grid strong { font-size:16px; letter-spacing:-.3px; font-weight:750; color:#9f1230; overflow-wrap:anywhere; }
+.cash-receipt-grid div:last-child { background:#fff; }
+.cash-receipt-expenses { margin-top:10px; padding:9px 11px; background:#fff; border:1px dashed #efdbe1; border-radius:10px; }
+.cash-receipt-expenses > div,.cash-comparison > div { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:5px 0; font-size:11px; }
+.cash-receipt-expenses span { color:#94767f; overflow-wrap:anywhere; }
+.cash-receipt-expenses strong { white-space:nowrap; font-weight:650; color:#79545e; }
+.cash-day { border:1px solid #efdee3; border-radius:12px; margin:12px; background:#fff; overflow:hidden; }
+.cash-day summary { display:flex; align-items:center; gap:8px; cursor:pointer; list-style:none; padding:12px; font-size:11px; font-weight:650; color:#946573; background:#fff8fa; }
+.cash-day summary::-webkit-details-marker { display:none; }
+.cash-day summary > .material-symbols-outlined { font-size:18px; color:#be8998; transition:transform .15s; }
+.cash-day[open] summary > .material-symbols-outlined { transform:rotate(180deg); }
+.cash-difference { display:flex; align-items:center; gap:5px; margin-left:auto; padding:6px 10px; border-radius:8px; white-space:nowrap; font-size:12px; letter-spacing:-.15px; }
+.cash-difference.is-matched { color:var(--red-deep); background:#fbe3ea; }
+.cash-difference.is-matched::before { content:'✓'; font-size:12px; }
+.cash-difference.is-over { color:#19724e; background:#e7f5ee; }
+.cash-difference.is-short { color:#c70d34; background:#fce2e9; }
+.cash-day-body { padding:13px 12px 12px; }
+.cash-day-body .cash-receipt { margin-top:0; padding-top:0; border:0; }
+.cash-day-body .cash-receipt h4 { display:none; }
+.cash-day-body .cash-receipt-grid { margin-top:0; }
+.cash-comparison { margin-top:13px; padding:10px 12px; background:linear-gradient(110deg,#fff0f4,#fff7f9); border:1px solid #f1d8e0; border-radius:11px; }
+.cash-comparison > div { color:#a06274; }
+.cash-comparison strong { font-size:14px; font-weight:750; color:#ac163c; }
+.cash-comparison > div:last-child { padding-top:8px; margin-top:4px; border-top:1px solid #f0dce3; }
+.cash-formula { color:#b2959e; font-size:9px; margin:10px 0 0; line-height:1.6; text-align:center; }
+@media (max-width:380px) {
+ .cash-heading { padding:15px; }
+ .cash-expense-row { grid-template-columns:minmax(0,1fr) 28px; }
+ .cash-expense-row > input { grid-column:1 / -1; }
+ .cash-receipt-grid strong { font-size:14px; }
+}

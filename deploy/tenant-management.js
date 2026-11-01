@@ -276,6 +276,7 @@ async function switchTenant(id) {
   store.dailySubmitted = {};
   store.attendance = {};
   store.dailyExpenses = {};
+  store.cashReports = {};
   store.pizzas = [];
   store.ownerFee = 2000;
   store.ownerFeeMode = "fixed";
@@ -300,15 +301,16 @@ async function loadCombinedTenants() {
   const generation = access.generation;
   const snapshots = await Promise.all(store.tenants.map(async (tenant) => {
     const appId = encodeURIComponent(tenant.data_app_id);
-    const [settings, pizzas, records, expenses] = await Promise.all([
+    const [settings, pizzas, records, expenses, cashReports] = await Promise.all([
       dbSelect("doko_settings", `app_id=eq.${appId}&select=owner_fee,owner_fee_mode,owner_fee_percent,staff_fee_per_slice&limit=1`),
       dbSelect("doko_pizzas", `app_id=eq.${appId}&select=id,name,cost,price,pack_size,pack_price,active,image,sort_order`),
       dbSelect("doko_daily_records", `app_id=eq.${appId}&select=record_date,sales,sales_detail,stock,submitted_at`),
       dbSelect("doko_daily_expenses", `app_id=eq.${appId}&select=record_date,amount`),
+      dbSelect("doko_cash_reports", `app_id=eq.${appId}&select=record_date,opening_cash,closing_cash,qris,expenses`),
     ]);
     return { tenant, ownerFee: Number(settings[0]?.owner_fee ?? 2000),
       ownerFeeMode: settings[0]?.owner_fee_mode === "percent" ? "percent" : "fixed",
-      ownerFeePercent: Number(settings[0]?.owner_fee_percent ?? 0), staffFeePerSlice: settings[0]?.staff_fee_per_slice == null ? null : Number(settings[0].staff_fee_per_slice), pizzas, records, expenses };
+      ownerFeePercent: Number(settings[0]?.owner_fee_percent ?? 0), staffFeePerSlice: settings[0]?.staff_fee_per_slice == null ? null : Number(settings[0].staff_fee_per_slice), pizzas, records, expenses, cashReports };
   }));
   if (generation !== access.generation) throw Error("Sesi telah berubah.");
   store.combinedTenants = snapshots;
@@ -328,6 +330,7 @@ function summaryForTenant(snapshot, dates, salesScope = "tenant") {
     });
   });
   summary.expenses = snapshot.expenses.filter((row) => selectedDates.has(row.record_date)).reduce((sum, row) => sum + Number(row.amount), 0);
+  summary.expenses += (snapshot.cashReports || []).filter(row => selectedDates.has(row.record_date)).reduce((sum,row) => sum + cashExpenseTotal(row),0);
   summary.ownerShare = calculateOwnerShare(summary, snapshot);
   summary.staffWage = calculateStaffWage(summary, snapshot);
   summary.staffIncome = calculateStaffIncome(summary, snapshot);
@@ -390,5 +393,6 @@ function renderCombinedTenants() {
     </button>`).join("")}
     <p class="combined-footnote">${isStaff ? "Penghasilan mengikuti pengaturan staff masing-masing tenant." : "Bagi hasil mengikuti fee masing-masing tenant."}</p>
   </section>
+  ${!isReport ? store.combinedTenants.map(snapshot => renderAdminCashReports((snapshot.cashReports || []).filter(row => selectedDates.has(row.record_date)), date => summaryForTenant(snapshot,[date]).revenue, snapshot.tenant.staff_name || "Putra")).join("") : ""}
   </div>`;
 }

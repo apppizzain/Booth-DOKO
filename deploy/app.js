@@ -88,6 +88,7 @@ const store = {
     amount: "",
   },
   dailyExpenses: {},
+  cashReports: {},
   dailyEditUnlocked: {
     sales: false,
     stock: false,
@@ -255,11 +256,12 @@ function isLockedAdminPinRoute() {
 
 async function loadRemoteData() {
   const generation = access.generation;
-  const [settingsRows, pizzaRows, recordRows, remoteExpenses] = await Promise.all([
+  const [settingsRows, pizzaRows, recordRows, remoteExpenses, cashRows] = await Promise.all([
     dbSelect("doko_settings", `app_id=eq.${dataAppId()}&select=owner_fee,owner_fee_mode,owner_fee_percent,staff_fee_per_slice&limit=1`),
     dbSelect("doko_pizzas", `app_id=eq.${dataAppId()}&select=id,name,cost,price,pack_size,pack_price,active,image,sort_order&order=sort_order.asc`),
     dbSelect("doko_daily_records", `app_id=eq.${dataAppId()}&select=record_date,sales,sales_detail,stock,submitted_at&order=record_date.desc`),
     loadRemoteDailyExpenses(),
+    dbSelect("doko_cash_reports", `app_id=eq.${dataAppId()}&select=record_date,opening_cash,closing_cash,qris,expenses&order=record_date.desc`),
   ]);
   if (generation !== access.generation) throw Error("Sesi telah berubah.");
 
@@ -307,6 +309,7 @@ async function loadRemoteData() {
 
   const today = isoDate(new Date());
   if (!store.attendance[today]) store.attendance[today] = { in: null, out: null };
+  store.cashReports = Object.fromEntries(cashRows.map(row => [row.record_date,row]));
   resetInputDraftDates();
   store.dailyExpenses = normalizeDailyExpenses({ ...store.dailyExpenses, ...remoteExpenses });
   saveLocalDailyExpenses();
@@ -530,6 +533,11 @@ async function dbUpsertDailyRecord(date, type) {
     if (type === "sales") Object.entries(record.salesDetail || {}).forEach(([id, detail]) => {
       if (Object.hasOwn(values, id)) values[`__loyang__${id}`] = detail.packs || 0;
     });
+    if (type === "sales" && canInputCash()) {
+      const report = await dbRequest("rpc/doko_access_submit_cash_sales", { method: "POST", body: { p_tenant_id: currentTenant.id, p_date: date, p_values: values, p_cash: collectCashPayload(store.inputDraft.cash) } });
+      store.cashReports[date] = report;
+      return report;
+    }
     return dbRequest("rpc/doko_access_submit", { method: "POST", body: { p_tenant_id: currentTenant.id, p_type: type, p_date: date, p_values: values } });
   }
   const progress = getDailyProgress(date);
@@ -869,6 +877,7 @@ function renderAdminDashboard(summary) {
           </section>`
         : ""
     }
+    ${renderAdminCashReports(selectedDates.map(date => store.cashReports[date]).filter(Boolean), date => getSummaryForDates([date]).revenue)}
     ${renderExpenseList(selectedDates)}
   `;
 }
@@ -1572,7 +1581,7 @@ function renderPhotoPreviewModal() {
 function inputRecordDate() { return (isAccessAdmin() && store.inputDate) || isoDate(new Date()); }
 
 function cloneInputDraft(draft) {
-  return { sales: { ...draft.sales }, packs: { ...draft.packs }, stock: { ...draft.stock }, refill: { ...draft.refill } };
+  return { sales: { ...draft.sales }, packs: { ...draft.packs }, stock: { ...draft.stock }, refill: { ...draft.refill }, cash: cashDraft(draft.cash) };
 }
 
 function syncInputDate() {
@@ -1581,7 +1590,7 @@ function syncInputDate() {
   if (store.inputDraftDate) store.inputDrafts[store.inputDraftDate] = { draft: cloneInputDraft(store.inputDraft), unlocked: { ...store.dailyEditUnlocked } };
   const cached = store.inputDrafts[date];
   const record = store.records[date] || {};
-  store.inputDraft = cached ? cloneInputDraft(cached.draft) : { sales: { ...record.sales }, packs: salesPackCounts(record.salesDetail), stock: { ...record.stock }, refill: { ...record.refill } };
+  store.inputDraft = cached ? cloneInputDraft(cached.draft) : { sales: { ...record.sales }, packs: salesPackCounts(record.salesDetail), stock: { ...record.stock }, refill: { ...record.refill }, cash: cashDraft(store.cashReports[date]) };
   store.dailyEditUnlocked = cached ? { ...cached.unlocked } : { sales: false, stock: false };
   store.inputDraftDate = date;
   return true;
@@ -1671,6 +1680,7 @@ function renderInputSales(activePizzas) {
         ${renderStaffSalesCard(activePizzas)}
       </div>
     </section>
+    ${canInputCash() ? renderPutraCashForm() : ""}
   `;
 }
 function renderStaffSalesCard(activePizzas) {
@@ -2670,6 +2680,7 @@ async function saveAdminPassword() {
 function handleInput(event) {
   if (handleAccessInput(event)) return;
   if (!hasAccessSession()) return;
+  if (handleCashInput(event)) return;
   const staffField = event.target.dataset.staffField;
   if (["staff_name", "tenant_name", "location"].includes(staffField)) {
     store.staffForm[staffField] = event.target.value;
@@ -2870,6 +2881,9 @@ async function submitDailyData() {
   if (isAccessStaff() && !canAccess(`input_${submitType}`)) return;
   if (!store.pizzas.some(pizza => pizza.active)) { showToast("Produk belum tersedia. Hubungi admin.", "error"); return; }
   if (syncInputDate()) { showToast("Tanggal berganti. Periksa jumlah sebelum menyimpan.", "error"); render(); return; }
+  if (submitType === "sales" && canInputCash()) {
+    try { collectCashPayload(store.inputDraft.cash); } catch(error) { showToast(error.message,"error"); return; }
+  }
   const submitLabel = submitType === "refill" ? "Refill stok" : submitType === "stock" ? "Stok" : "Penjualan";
 
   if (isDraftLocked(submitType, today)) {
@@ -3272,7 +3286,7 @@ function getSummaryForDates(dates, options = {}) {
         total.revenue += getSalesRevenue(record, pizza);
         total.cost += qty * pizza.cost;
       });
-      total.expenses += getExpenseTotalForDates([date]);
+      total.expenses += getExpenseTotalForDates([date]) + cashExpenseTotal(store.cashReports[date]);
       total.ownerShare = calculateOwnerShare(total);
       total.staffWage = calculateStaffWage(total);
       total.staffIncome = calculateStaffIncome(total);
