@@ -5022,6 +5022,8 @@ body.pin-keyboard-active .admin-pin-screen {
   color: #c95a69;
 }
 
+.slice-adjustment-note { margin:8px 0; padding:9px 12px; border-radius:9px; color:#a36071; background:#fff1f5; font-size:10px; line-height:1.6; }
+
 /* Compact cash cards, using the application's red and blush palette. */
 .cash-form,.admin-cash-panel { padding:0; overflow:hidden; border:1px solid #f0cbd2; border-radius:16px; background:#fff; box-shadow:0 8px 24px rgba(159,8,32,.055); }
 .cash-heading { display:flex; align-items:center; gap:11px; margin:0; padding:17px 18px; background:linear-gradient(115deg,var(--red-deep),#d7183b 76%,#e3354e); color:#fff; }

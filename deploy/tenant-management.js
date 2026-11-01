@@ -326,7 +326,7 @@ function summaryForTenant(snapshot, dates, salesScope = "tenant") {
       const qty = getSalesQuantity(record, pizza.id, salesScope);
       summary.slices += qty;
       summary.revenue += getSalesRevenue(record, pizza);
-      summary.cost += qty * Number(pizza.cost);
+      summary.cost += getSalesCost(record, pizza, salesScope);
     });
   });
   summary.expenses = snapshot.expenses.filter((row) => selectedDates.has(row.record_date)).reduce((sum, row) => sum + Number(row.amount), 0);
@@ -336,7 +336,7 @@ function summaryForTenant(snapshot, dates, salesScope = "tenant") {
   summary.staffIncome = calculateStaffIncome(summary, snapshot);
   summary.afterFee = summary.revenue - summary.ownerShare;
   summary.net = summary.afterFee - summary.cost - summary.expenses - summary.staffWage;
-  return summary;
+  return applySliceTotalAdjustment(summary,dates,snapshot.records);
 }
 
 function renderCombinedTenants() {
@@ -388,7 +388,7 @@ function renderCombinedTenants() {
     ${summaries.map(({ snapshot, summary, hasData }) => `<button class="combined-tenant-row ${hasData ? "" : "is-empty"}" type="button" data-select-tenant="${escapeHtml(snapshot.tenant.id)}" aria-label="Lihat detail ${escapeHtml(staffTenantLabel(snapshot.tenant))}">
       <span class="combined-avatar" aria-hidden="true">${escapeHtml(getInitials(snapshot.tenant.staff_name || tenantLabel(snapshot.tenant)))}</span>
       <span class="combined-tenant-copy"><strong>${escapeHtml(snapshot.tenant.staff_name || "Staff")}</strong><span>${escapeHtml(tenantLabel(snapshot.tenant))}${snapshot.tenant.active ? "" : " · Nonaktif"}</span>${hasData && !isStaff ? `<small>Bagi hasil ${rupiah(summary.ownerShare)}</small>` : ""}</span>
-      <span class="combined-tenant-value">${hasData ? `<strong>${rupiah(isStaff ? summary.staffIncome : summary.revenue)}</strong><small>${summary.slices} slice</small>` : `<small class="combined-no-data">Belum ada data</small>`}</span>
+      <span class="combined-tenant-value">${hasData ? `<strong>${rupiah(isStaff ? summary.staffIncome : summary.revenue)}</strong><small>${summary.slices} slice${summary.sliceAdjustment ? " · dikoreksi" : ""}</small>` : `<small class="combined-no-data">Belum ada data</small>`}</span>
       <span class="material-symbols-outlined combined-row-arrow" aria-hidden="true">chevron_right</span>
     </button>`).join("")}
     <p class="combined-footnote">${isStaff ? "Penghasilan mengikuti pengaturan staff masing-masing tenant." : "Bagi hasil mengikuti fee masing-masing tenant."}</p>

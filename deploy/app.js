@@ -856,6 +856,7 @@ function renderAdminDashboard(summary) {
         <strong class="viewer-summary-value">${rupiah(summary.net)}</strong>
       </div>
     </section>
+    ${renderSliceAdjustment(summary)}
     <section class="panel admin-list-panel">
       <div class="admin-list-head">
         <h3>Ringkasan Penjualan</h3>
@@ -1874,6 +1875,7 @@ function renderAdminReport() {
         <strong>${summary.slices}<small>slice</small></strong>
       </div>
       <div class="ticket-divider"></div>
+      ${renderSliceAdjustment(summary)}
       <div class="ticket-section-title">Detail Pizza Terjual</div>
       ${renderVariantReports(selectedDates, { showMoney: false, compact: true, ticket: true, salesScope: reportView })}
       <div class="ticket-divider"></div>
@@ -3260,7 +3262,7 @@ function ownerFeeLabel(fee = store) {
 function ownerFeeFormula(summary, fee = store) {
   return fee.ownerFeeMode === "percent"
     ? `${Number(fee.ownerFeePercent)}% x ${rupiah(summary.revenue)} =`
-    : `${summary.slices} slice x ${rupiah(fee.ownerFee)} =`;
+    : `${summary.unadjustedSlices ?? summary.slices} slice x ${rupiah(fee.ownerFee)} =`;
 }
 
 function calculateStaffWage(summary, fee = store) {
@@ -3272,19 +3274,19 @@ function calculateStaffIncome(summary, fee = store) {
 }
 
 function staffIncomeFormula(summary, fee = store) {
-  return fee.staffFeePerSlice == null ? ownerFeeFormula(summary, fee) : `${summary.slices} slice x ${rupiah(fee.staffFeePerSlice)} =`;
+  return fee.staffFeePerSlice == null ? ownerFeeFormula(summary, fee) : `${summary.unadjustedSlices ?? summary.slices} slice x ${rupiah(fee.staffFeePerSlice)} =`;
 }
 
 function getSummaryForDates(dates, options = {}) {
   const salesScope = options.salesScope || "tenant";
-  return dates.reduce(
+  const summary = dates.reduce(
     (total, date) => {
       const record = store.records[date] || { sales: {}, stock: {} };
       store.pizzas.forEach((pizza) => {
         const qty = getSalesQuantity(record, pizza.id, salesScope);
         total.slices += qty;
         total.revenue += getSalesRevenue(record, pizza);
-        total.cost += qty * pizza.cost;
+        total.cost += getSalesCost(record, pizza, salesScope);
       });
       total.expenses += getExpenseTotalForDates([date]) + cashExpenseTotal(store.cashReports[date]);
       total.ownerShare = calculateOwnerShare(total);
@@ -3296,6 +3298,27 @@ function getSummaryForDates(dates, options = {}) {
     },
     { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, staffWage: 0, staffIncome: 0, net: 0, afterFee: 0 }
   );
+  return applySliceTotalAdjustment(summary, dates, Object.values(store.records));
+}
+
+// Monthly migration corrections affect the reported total only. Product quantities,
+// daily input, stock and financial calculations retain their original values.
+function sliceTotalAdjustment(dates, records) {
+  const selected = new Set(dates), adjustments = new Map();
+  records.forEach(record => Object.entries((record.salesDetail || record.sales_detail)?.__total_adjustments || {}).forEach(([month, adjustment]) => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !Number.isSafeInteger(adjustment.slice_delta)) return;
+    const [year, number] = month.split("-").map(Number), days = new Date(year,number,0).getDate();
+    for(let day=1;day<=days;day++) if(!selected.has(`${month}-${String(day).padStart(2,"0")}`)) return;
+    adjustments.set(month,adjustment.slice_delta);
+  }));
+  return [...adjustments.values()].reduce((sum,delta) => sum+delta,0);
+}
+function applySliceTotalAdjustment(summary, dates, records) {
+  const delta=sliceTotalAdjustment(dates,records);
+  return delta ? {...summary,unadjustedSlices:summary.slices,sliceAdjustment:delta,slices:Math.max(0,summary.slices+delta)} : summary;
+}
+function renderSliceAdjustment(summary) {
+  return summary.sliceAdjustment ? `<p class="slice-adjustment-note">Koreksi perpindahan database: ${summary.sliceAdjustment>0 ? "+" : "−"}${Math.abs(summary.sliceAdjustment)} slice pada total periode.</p>` : "";
 }
 
 function getViewerDates() {
@@ -3342,6 +3365,10 @@ function getSalesRevenue(record, pizza) {
   return (qty - packs * size) * Number(detail.slice_price) + packs * Number(detail.pack_price);
 }
 
+function getSalesCost(record, pizza, salesScope = "tenant") {
+  return getSalesQuantity(record, pizza.id, salesScope) * Number(record.salesDetail?.[pizza.id]?.slice_cost ?? pizza.cost ?? 0);
+}
+
 function buildSalesDetail(values, packs = {}, previous = {}) {
   const details = { ...previous };
   store.pizzas.filter(pizza => pizza.active).forEach(pizza => {
@@ -3349,7 +3376,7 @@ function buildSalesDetail(values, packs = {}, previous = {}) {
     const size = salesPackSize(pizza, old);
     if (!size) return;
     const count = Math.min(Number(packs[pizza.id]) || 0, Math.floor((values[pizza.id] || 0) / size));
-    details[pizza.id] = { packs: count, pack_size: size,
+    details[pizza.id] = { ...old, packs: count, pack_size: size,
       slice_price: Number(old.slice_price ?? pizza.price), pack_price: Number(old.pack_price ?? pizza.packPrice) };
   });
   return details;

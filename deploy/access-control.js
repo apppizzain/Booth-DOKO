@@ -312,7 +312,7 @@ function renderStaffReadOnly(kind) {
   const stockSnapshot = kind === "stock" ? staffStockSnapshot(chosen[0]) : null;
   const hasData = kind === "stock" ? Object.keys(stockSnapshot).length > 0 : chosen.some((date) => Object.keys(store.records[date]?.[kind] || {}).length > 0 || getDailyProgress(date)[kind]);
   const totals = store.pizzas.map((pizza) => ({ pizza, qty: kind === "stock" ? Number(stockSnapshot[pizza.id]) || 0 : chosen.reduce((sum,date) => sum + (Number(store.records[date]?.[kind]?.[pizza.id]) || 0),0) }));
-  const total = totals.reduce((sum,item) => sum+item.qty,0);
+  const total = totals.reduce((sum,item) => sum+item.qty,0) + (kind === "sales" ? sliceTotalAdjustment(chosen,Object.values(store.records)) : 0);
   return `<section class="panel viewer-filter-panel stack access-read-filter"><div class="segmented" role="tablist" aria-label="Filter tanggal staff">${viewerFilterButton("today","Hari Ini")}${viewerFilterButton("yesterday","Kemarin")}${viewerFilterButton("custom","Custom")}</div>${store.viewerFilter === "custom" ? renderCalendarRange() : ""}</section>
     ${kind === "stock" && access.stockRefreshError ? `<p class="access-stock-error" role="status">${escapeHtml(access.stockRefreshError)} <button type="button" data-refresh-staff-stock>Coba lagi</button></p>` : ""}
     ${hasData ? `<section class="panel access-read-report" aria-label="${kind === "sales" ? "Ringkasan penjualan" : "Ringkasan stok pizza"}">
