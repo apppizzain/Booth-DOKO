@@ -1137,7 +1137,7 @@ function renderExpenseList(dates, suppliedExpenses) {
       <div class="daily-expense-list">
         ${
           expenses.length
-            ? [...groups].map(([date,rows]) => `<section class="daily-expense-day" aria-label="Pengeluaran ${formatDate(date)}"><header class="daily-expense-date"><time datetime="${date}">${formatDate(date)}</time><strong>${rupiah(rows.reduce((sum,row) => sum+row.amount,0))}</strong></header>${rows.map(
+            ? [...groups].map(([date,rows]) => `<details class="daily-expense-day" ${dates.length === 1 ? "open" : ""} aria-label="Pengeluaran ${formatDate(date)}"><summary class="daily-expense-date"><time datetime="${date}">${formatDate(date)}</time><strong>${rupiah(rows.reduce((sum,row) => sum+row.amount,0))}</strong><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary>${rows.map(
                   (expense) => `
                     <article class="daily-expense-row">
                       <div>
@@ -1153,7 +1153,7 @@ function renderExpenseList(dates, suppliedExpenses) {
                     </article>
                   `
                 )
-                .join("")}</section>`).join("")
+                .join("")}</details>`).join("")
             : `<p class="muted daily-expense-empty">Belum ada pengeluaran.</p>`
         }
       </div>

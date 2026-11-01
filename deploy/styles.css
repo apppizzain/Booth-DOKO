@@ -2400,8 +2400,11 @@ a {
 .expense-header-total small { color:#b36c80; font-size:9px; font-weight:600; }
 .expense-header-total strong { color:var(--red-deep); font-family:Manrope,system-ui,sans-serif; font-size:15px; font-weight:800; white-space:nowrap; }
 .daily-expense-day { overflow:hidden; border:1px solid #f0dbe1; border-radius:11px; margin-top:8px; }
-.daily-expense-date { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; background:#fff3f6; color:#a35a6e; font-size:10px; }
-.daily-expense-date strong { color:var(--red-deep); font-size:11px; white-space:nowrap; }
+.daily-expense-date { display:flex; align-items:center; gap:10px; padding:12px; background:#fff3f6; color:#a35a6e; font-size:11px; font-weight:600; cursor:pointer; list-style:none; }
+.daily-expense-date::-webkit-details-marker { display:none; }
+.daily-expense-date strong { margin-left:auto; color:var(--red-deep); font-size:12px; white-space:nowrap; }
+.daily-expense-date > .material-symbols-outlined { color:#be8998; font-size:18px; transition:transform .15s; }
+.daily-expense-day[open] > .daily-expense-date > .material-symbols-outlined { transform:rotate(180deg); }
 .daily-expense-day .daily-expense-row { border:0; border-top:1px solid #f5e8ec; border-radius:0; background:#fff; padding:11px 10px; }
 .daily-expense-day .daily-expense-row h4 { font-family:"Plus Jakarta Sans",system-ui,sans-serif; font-size:12px; font-weight:600; line-height:1.5; overflow-wrap:anywhere; }
 .daily-expense-day .daily-expense-row p { font-weight:500; font-size:9px; color:#b3929b; }

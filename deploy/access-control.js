@@ -282,7 +282,7 @@ function renderAdminCashReports(reports, revenueForDate, label="Putra") {
   if(!isAccessAdmin() || store.adminView!=="dashboard" || !reports.length) return "";
   return `<section class="panel admin-cash-panel" aria-label="Rekonsiliasi kas"><div class="cash-heading"><span class="material-symbols-outlined" aria-hidden="true">account_balance_wallet</span><div><h3>Kas ${escapeHtml(label)}</h3><p>Rekonsiliasi penjualan harian</p></div></div>${reports.map(report => {
     const revenue=revenueForDate(report.record_date), {difference}=cashReconciliation(report,revenue);
-    return `<details class="cash-day" ${reports.length===1 ? "open" : ""}><summary><span>${formatDate(report.record_date)}</span><strong class="cash-difference ${difference>0 ? "is-over" : difference<0 ? "is-short" : "is-matched"}">${cashDifferenceLabel(difference)}</strong><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary><div class="cash-day-body">${renderPutraCashReceipt(report,{showExpenseDetails:false})}</div></details>`;
+    return `<details class="cash-day" ${reports.length===1 ? "open" : ""}><summary><span>${formatDate(report.record_date)}</span><strong class="cash-difference ${difference>0 ? "is-over" : difference<0 ? "is-short" : "is-matched"}">${cashDifferenceLabel(difference)}</strong><span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary><div class="cash-day-body">${renderPutraCashReceipt(report)}</div></details>`;
   }).join("")}</section>`;
 }
 
