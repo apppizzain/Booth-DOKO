@@ -75,6 +75,7 @@ function clearAccessSession(message = "") {
   store.dbLoading = false; store.dailyEditUnlocked = {sales:false,stock:false};
   store.tenants = []; store.tenantSelection = "";
   store.records = {}; store.pizzas = []; store.attendance = {}; store.dailyExpenses = {}; store.combinedTenants = [];
+  store.staffFeePerSlice = null;
   store.inputDraft = { sales: {}, stock: {}, refill: {} }; store.dailySubmitted = {};
   store.inputDate = ""; store.inputDraftDate = ""; store.inputDrafts = {};
   store.adminEdit = { type: null, date: null, values: {}, saving: false };
@@ -111,6 +112,7 @@ async function loadStaffWorkspace() {
   store.records = {}; store.pizzas = []; store.dailyExpenses = {}; store.attendance = {}; store.dailySubmitted = {};
   store.inputDraft = { sales: {}, stock: {}, refill: {} }; store.ownerFee = 0;
   store.ownerFeeMode = "fixed"; store.ownerFeePercent = 0; store.ownerFeeDraft = null;
+  store.staffFeePerSlice = null;
   if (!store.tenants.length) { store.inputPage = "timer"; return; }
   const result = await dbRequest("rpc/doko_access_workspace", { method: "POST", body: { p_tenant_id: currentTenant.id } });
   if (generation !== access.generation || tenantId !== currentTenant.id) throw Error("Sesi telah berubah.");
@@ -127,7 +129,7 @@ function applyStaffWorkspace(result) {
     const stock = splitStockPayload(row.stock);
     store.records[row.record_date] = { sales: splitSalesPayload(row.sales).total, salesDetail: row.sales_detail || {}, stock: stock.stock, refill: row.refill || stock.refill, stockBalance: row.stock_balance };
     store.dailySubmitted[row.record_date] = {
-      sales: row.sales?.__submitted === true || Object.keys(store.records[row.record_date].sales).length > 0,
+      sales: Object.hasOwn(row.sales || {}, "__submitted") ? row.sales.__submitted === true : Object.keys(store.records[row.record_date].sales).length > 0,
       stock: row.stock?.__submitted === true || Object.keys(stock.stock).length > 0,
     };
   });
@@ -180,20 +182,60 @@ function ensureStaffPage() {
   const pages = staffPages();
   if (!pages.some(([page]) => page === store.inputPage)) store.inputPage = pages[0]?.[0] || "none";
 }
-function renderStaffPortal() {
-  if (store.dbLoading || store.tenantError || !store.tenantResolved) return `<main class="main narrow">${store.tenantResolved && store.tenants.length ? renderTenantSelector() : ""}${store.tenantResolved ? `<nav class="input-tabs access-nav" aria-label="Menu staff">${staffPages().map(([page,,icon,label]) => inputPageButton(page,icon,label)).join("")}</nav>` : ""}${store.tenantError ? `<section class="panel stack"><p role="alert">${escapeHtml(store.tenantError)}</p><button class="btn secondary" data-retry-tenant>Coba lagi</button></section>` : renderTenantLoading()}</main>`;
-  ensureStaffPage();
+
+function showStaffSalesReceipt() {
+  return isAccessStaff() && store.inputPage === "sales" && isSalesSubmitted(inputRecordDate()) && !store.dailyEditUnlocked.sales && !store.submitLoading;
+}
+
+function renderStaffSalesReceipt() {
+  const date = inputRecordDate(), record = store.records[date] || {};
+  const rows = Object.entries(record.sales || {}).filter(([,qty]) => Number(qty) > 0).map(([id,qty]) => {
+    const pizza = store.pizzas.find(item => item.id === id) || { id, name: id };
+    const detail = record.salesDetail?.[id] || {};
+    const packs = Number(detail.packs) || 0, size = Number(detail.pack_size || pizza.packSize) || 0;
+    return { pizza, qty: Number(qty), description: packs ? `${packs} loyang · ${Math.max(0,qty-packs*size)} slice` : "" };
+  });
+  const total = rows.reduce((sum,row) => sum + row.qty,0);
+  return `<section class="panel staff-sales-receipt" aria-label="Rekap penjualan terkirim">
+    <header class="staff-receipt-heading"><span class="staff-receipt-check material-symbols-outlined" aria-hidden="true">task_alt</span><div><span class="staff-receipt-status">TERSIMPAN</span><h3>Rekap Penjualan</h3></div></header>
+    <p class="staff-receipt-meta">${escapeHtml(tenantLabel())}<span>·</span>${formatDate(date)}</p>
+    <div class="staff-receipt-total"><div><span>Total terjual</span><strong>${total}<small>slice</small></strong></div><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span></div>
+    <div class="staff-receipt-list">${rows.map(({pizza,qty,description}) => `<div class="staff-receipt-row"><span class="access-read-product-icon" aria-hidden="true">${escapeHtml(getInitials(pizza.name))}</span><div><strong>${escapeHtml(pizza.name)}</strong>${description ? `<small>${escapeHtml(description)}</small>` : ""}</div><span class="staff-receipt-qty">${qty}<small>slice</small></span></div>`).join("") || '<p class="staff-receipt-empty">Penjualan tersimpan dengan jumlah 0 slice.</p>'}</div>
+    <div class="staff-receipt-actions"><button class="btn secondary full" type="button" data-edit-staff-sales><span class="material-symbols-outlined" aria-hidden="true">edit</span>Edit Penjualan</button>${canAccess("input_stock") ? '<button class="staff-receipt-next" type="button" data-input-page="stock">Lanjut input stok<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button>' : ''}</div>
+  </section>`;
+}
+
+function editStaffSales(cancel = false) {
+  if (!isAccessStaff() || !canAccess("input_sales") || store.submitLoading || store.dbLoading) return;
+  syncInputDate();
+  const date = inputRecordDate(), record = store.records[date];
+  if (!isSalesSubmitted(date) || !record) return;
+  store.inputDraft.sales = { ...record.sales };
+  store.inputDraft.packs = salesPackCounts(record.salesDetail);
+  store.dailyEditUnlocked.sales = !cancel;
+  store.inputPage = "sales";
+  render();
+}
+
+function renderStaffNavigation() {
   const pages = staffPages();
-  const write = ["sales", "stock", "refill"].includes(store.inputPage);
+  return pages.length === 1 && pages[0][0] === "sales" ? "" : `<nav class="input-tabs access-nav" aria-label="Menu staff">${pages.map(([page,,icon,label]) => inputPageButton(page,icon,label)).join("")}</nav>`;
+}
+
+function renderStaffPortal() {
+  if (store.dbLoading || store.tenantError || !store.tenantResolved) return `<main class="main narrow">${store.tenantResolved && store.tenants.length ? renderTenantSelector() : ""}${store.tenantResolved ? renderStaffNavigation() : ""}${store.tenantError ? `<section class="panel stack"><p role="alert">${escapeHtml(store.tenantError)}</p><button class="btn secondary" data-retry-tenant>Coba lagi</button></section>` : renderTenantLoading()}</main>`;
+  ensureStaffPage();
+  const receipt = showStaffSalesReceipt();
+  const write = ["sales", "stock", "refill"].includes(store.inputPage) && !receipt;
   let body = "";
-  if (store.inputPage === "sales") body = renderInputSales(store.pizzas.filter((pizza) => pizza.active));
+  if (store.inputPage === "sales") body = receipt ? renderStaffSalesReceipt() : renderInputSales(store.pizzas.filter((pizza) => pizza.active));
   else if (store.inputPage === "stock") body = renderInputStock(store.pizzas.filter((pizza) => pizza.active));
   else if (store.inputPage === "refill") body = renderInputRefill(store.pizzas.filter((pizza) => pizza.active));
   else if (store.inputPage === "timer") body = renderInputTimers();
   else if (store.inputPage.startsWith("view_")) body = renderStaffReadOnly(store.inputPage === "view_sales" ? "sales" : "stock");
   else body = '<section class="panel tenant-empty-state"><h3>Belum ada hak akses</h3><p>Hubungi admin untuk mengatur hak akses Anda.</p></section>';
   return `<main class="main narrow access-staff-main">${store.tenants.length ? renderTenantSelector() : ""}
-    <nav class="input-tabs access-nav" aria-label="Menu staff">${pages.map(([page,,icon,label]) => inputPageButton(page,icon,label)).join("")}</nav>${body}</main>${write ? renderSubmitBar() : ""}`;
+    ${renderStaffNavigation()}${body}</main>${write ? renderSubmitBar() : ""}`;
 }
 function renderStaffReadOnly(kind) {
   const dates = getViewerDates();
@@ -269,6 +311,8 @@ async function saveAccessAccount(account = null) {
 }
 
 function handleAccessClick(event) {
+  if (event.target.closest("[data-edit-staff-sales]")) { editStaffSales(); return true; }
+  if (event.target.closest("[data-cancel-staff-sales]")) { editStaffSales(true); return true; }
   if (event.target.closest("[data-access-login]")) { loginAccess(); return true; }
   if (event.target.closest("[data-access-logout]")) { logoutAccess(); return true; }
   if (event.target.closest("[data-access-new]")) { editAccessAccount(null); return true; }

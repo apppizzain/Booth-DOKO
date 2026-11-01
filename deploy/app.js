@@ -40,6 +40,7 @@ const store = {
   ownerFee: 2000,
   ownerFeeMode: "fixed",
   ownerFeePercent: 0,
+  staffFeePerSlice: null,
   ownerFeeDraft: null,
   adminView: normalizeRoute(location.pathname) === "/view" ? "reports" : "dashboard",
   adminQuickPanel: null,
@@ -255,7 +256,7 @@ function isLockedAdminPinRoute() {
 async function loadRemoteData() {
   const generation = access.generation;
   const [settingsRows, pizzaRows, recordRows, remoteExpenses] = await Promise.all([
-    dbSelect("doko_settings", `app_id=eq.${dataAppId()}&select=owner_fee,owner_fee_mode,owner_fee_percent&limit=1`),
+    dbSelect("doko_settings", `app_id=eq.${dataAppId()}&select=owner_fee,owner_fee_mode,owner_fee_percent,staff_fee_per_slice&limit=1`),
     dbSelect("doko_pizzas", `app_id=eq.${dataAppId()}&select=id,name,cost,price,pack_size,pack_price,active,image,sort_order&order=sort_order.asc`),
     dbSelect("doko_daily_records", `app_id=eq.${dataAppId()}&select=record_date,sales,sales_detail,stock,submitted_at&order=record_date.desc`),
     loadRemoteDailyExpenses(),
@@ -266,6 +267,7 @@ async function loadRemoteData() {
     store.ownerFee = Number(settingsRows[0].owner_fee ?? 2000);
     store.ownerFeeMode = settingsRows[0].owner_fee_mode === "percent" ? "percent" : "fixed";
     store.ownerFeePercent = Number(settingsRows[0].owner_fee_percent ?? 0);
+    store.staffFeePerSlice = settingsRows[0].staff_fee_per_slice == null ? null : Number(settingsRows[0].staff_fee_per_slice);
     store.ownerFeeDraft = null;
   } else {
     throw new Error("Pengaturan tenant belum tersedia. Minta admin menyelesaikan penyiapan tenant.");
@@ -838,6 +840,7 @@ function renderAdminDashboard(summary) {
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.expenses)}</strong>
       </div>
+      ${summary.staffWage ? `<div class="viewer-summary-row"><div class="viewer-summary-copy"><span class="viewer-summary-title">Gaji staff</span><em class="viewer-summary-formula">${staffIncomeFormula(summary)}</em></div><strong class="viewer-summary-value">${rupiah(summary.staffWage)}</strong></div>` : ""}
       <div class="viewer-summary-row highlight">
         <div class="viewer-summary-copy">
           <span class="viewer-summary-title">Laba Bersih</span>
@@ -1351,6 +1354,7 @@ function renderOwnerFee() {
       </label>
       <p class="fee-help">${percent ? "Dari harga jual setiap slice, sebelum modal dan biaya." : "Nominal tetap untuk setiap slice terjual."}</p>
     </section>
+    ${store.staffFeePerSlice !== null ? `<section class="panel fee-compact-panel staff-pay-panel"><div class="fee-compact-head"><div><span>Gaji ${escapeHtml(currentTenant.staff_name || "staff")}</span><strong>${rupiah(store.staffFeePerSlice)} / slice</strong></div><span class="material-symbols-outlined" aria-hidden="true">badge</span></div><p class="fee-help">Dihitung dari jumlah slice terjual, terpisah dari komisi pemilik tempat.</p></section>` : ""}
   `;
 }
 
@@ -1654,11 +1658,14 @@ function renderInputPage({ activePizzas }) {
 
 
 function renderInputSales(activePizzas) {
+  if (!activePizzas.length) return `<section class="panel staff-sales-empty"><span class="material-symbols-outlined" aria-hidden="true">local_pizza</span><h3>Produk belum tersedia</h3><p>${isAccessAdmin() ? "Tambahkan produk melalui menu Setting untuk mulai mencatat penjualan." : "Admin perlu menambahkan produk tenant ini sebelum penjualan dapat diinput."}</p></section>`;
+  const editing = isAccessStaff() && isSalesSubmitted(inputRecordDate()) && store.dailyEditUnlocked.sales;
   return `
     <section class="panel sales-panel shift-sales-panel">
       <div class="section-title solid compact-sales-title">
         <span class="icon-tile"><span class="material-symbols-outlined">point_of_sale</span></span>
-        <div><h3>Laporan Penjualan</h3></div>
+        <div><h3>${editing ? "Edit Penjualan" : "Laporan Penjualan"}</h3></div>
+        ${editing ? '<button class="staff-sales-cancel" type="button" data-cancel-staff-sales>Batal</button>' : ""}
       </div>
       <div class="sales-shift-stack">
         ${renderStaffSalesCard(activePizzas)}
@@ -1793,7 +1800,7 @@ function renderCounterRow(pizza, type) {
     return renderPackSalesRow(pizza, store.inputDraft.sales, store.inputDraft.packs || {}, store.records[inputRecordDate()]?.salesDetail || {});
   }
   const value = store.inputDraft[type]?.[pizza.id] || 0;
-  const locked = isDraftLocked(type);
+  const locked = isDraftLocked(type) || store.submitLoading;
   return `
     <article class="variant-row input-counter-row ${type}-row ${locked ? "is-locked" : ""}">
       <div class="pizza-info">
@@ -1824,11 +1831,11 @@ function renderSubmitBar() {
     ? `<span class="spinner"></span>Menyimpan...`
     : locked
       ? `<span class="material-symbols-outlined">edit</span>Perbaharui Data`
-      : `<span class="material-symbols-outlined">send</span>Submit ${pageLabel}`;
+      : `<span class="material-symbols-outlined">${isAccessStaff() && type === "sales" && isSalesSubmitted(inputRecordDate()) ? 'save' : 'send'}</span>${isAccessStaff() && type === "sales" && isSalesSubmitted(inputRecordDate()) ? 'Simpan Perubahan' : `Submit ${pageLabel}`}`;
 
   return `
     <div class="submit-bar">
-      <button class="btn full" data-submit-daily ${store.submitLoading ? "disabled" : ""}>${label}</button>
+      <button class="btn full" data-submit-daily ${store.submitLoading || !store.pizzas.some(pizza => pizza.active) ? "disabled" : ""}>${label}</button>
     </div>
   `;
 }
@@ -1902,8 +1909,8 @@ function reportTypeButton(view, label) {
 
 function renderStaffReportTotals(summary) {
   const label = "Staff";
-  const income = summary.ownerShare;
-  const incomeFormula = ownerFeeFormula(summary);
+  const income = summary.staffIncome;
+  const incomeFormula = staffIncomeFormula(summary);
 
   return `
     <section class="viewer-report-summary report-ticket-summary shift-income-summary">
@@ -1987,6 +1994,7 @@ function renderViewerTotals(summary, rangeMode, options = {}) {
         </div>
         <strong class="viewer-summary-value">${rupiah(summary.afterFee)}</strong>
       </div>
+      ${summary.staffWage ? `<div class="viewer-summary-row"><div class="viewer-summary-copy"><span class="viewer-summary-title">Gaji staff</span><em class="viewer-summary-formula">${staffIncomeFormula(summary)}</em></div><strong class="viewer-summary-value">${rupiah(summary.staffWage)}</strong></div>` : ""}
     </section>
   `;
 }
@@ -2279,6 +2287,7 @@ function handleClick(event) {
 
   const packCounter = event.target.closest("[data-pack-counter]");
   if (packCounter) {
+    if (store.submitLoading) return;
     const pizza = store.pizzas.find(item => item.id === packCounter.dataset.id && item.active);
     const date = packCounter.dataset.date;
     if (!pizza) return;
@@ -2297,6 +2306,7 @@ function handleClick(event) {
 
   const counter = event.target.closest("[data-counter]");
   if (counter) {
+    if (store.submitLoading) return;
     syncInputDate();
     const type = counter.dataset.counter;
     const id = counter.dataset.id;
@@ -2858,6 +2868,7 @@ async function submitDailyData() {
   const today = inputRecordDate();
   const submitType = ["stock", "refill"].includes(store.inputPage) ? store.inputPage : "sales";
   if (isAccessStaff() && !canAccess(`input_${submitType}`)) return;
+  if (!store.pizzas.some(pizza => pizza.active)) { showToast("Produk belum tersedia. Hubungi admin.", "error"); return; }
   if (syncInputDate()) { showToast("Tanggal berganti. Periksa jumlah sebelum menyimpan.", "error"); render(); return; }
   const submitLabel = submitType === "refill" ? "Refill stok" : submitType === "stock" ? "Stok" : "Penjualan";
 
@@ -2910,8 +2921,8 @@ async function submitDailyData() {
   store.submitLoading = false;
 
   if (submitType === "sales") {
-    store.inputPage = canAccess("input_stock") ? "stock" : "sales";
-    showToast(canAccess("input_stock") ? "Penjualan tersimpan. Lanjut isi stok." : "Penjualan tersimpan.", "success");
+    store.inputPage = isAccessStaff() ? "sales" : canAccess("input_stock") ? "stock" : "sales";
+    showToast(isAccessStaff() ? (previousProgress.sales ? "Penjualan berhasil diperbarui." : "Penjualan berhasil dikirim.") : canAccess("input_stock") ? "Penjualan tersimpan. Lanjut isi stok." : "Penjualan tersimpan.", "success");
   } else {
     store.inputPage = submitType;
     showToast(`${submitLabel} tersimpan untuk ${formatDate(today)}.`, "success");
@@ -3238,6 +3249,18 @@ function ownerFeeFormula(summary, fee = store) {
     : `${summary.slices} slice x ${rupiah(fee.ownerFee)} =`;
 }
 
+function calculateStaffWage(summary, fee = store) {
+  return summary.slices * Number(fee.staffFeePerSlice || 0);
+}
+
+function calculateStaffIncome(summary, fee = store) {
+  return fee.staffFeePerSlice == null ? calculateOwnerShare(summary, fee) : calculateStaffWage(summary, fee);
+}
+
+function staffIncomeFormula(summary, fee = store) {
+  return fee.staffFeePerSlice == null ? ownerFeeFormula(summary, fee) : `${summary.slices} slice x ${rupiah(fee.staffFeePerSlice)} =`;
+}
+
 function getSummaryForDates(dates, options = {}) {
   const salesScope = options.salesScope || "tenant";
   return dates.reduce(
@@ -3251,11 +3274,13 @@ function getSummaryForDates(dates, options = {}) {
       });
       total.expenses += getExpenseTotalForDates([date]);
       total.ownerShare = calculateOwnerShare(total);
-      total.net = total.revenue - total.cost - total.ownerShare - total.expenses;
+      total.staffWage = calculateStaffWage(total);
+      total.staffIncome = calculateStaffIncome(total);
+      total.net = total.revenue - total.cost - total.ownerShare - total.expenses - total.staffWage;
       total.afterFee = total.revenue - total.ownerShare;
       return total;
     },
-    { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, net: 0, afterFee: 0 }
+    { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, staffWage: 0, staffIncome: 0, net: 0, afterFee: 0 }
   );
 }
 
@@ -3330,7 +3355,7 @@ function renderPackSalesRow(pizza, values, packs, details, editDate = "") {
   const count = Number(packs[pizza.id]) || 0;
   const total = Number(values[pizza.id]) || 0;
   const singles = Math.max(0, total - count * size);
-  const locked = editDate ? store.adminEdit.saving : isDraftLocked("sales");
+  const locked = editDate ? store.adminEdit.saving : isDraftLocked("sales") || store.submitLoading;
   const slicePrice = Number(detail.slice_price ?? pizza.price);
   const packPrice = Number(detail.pack_price ?? pizza.packPrice);
   return `<article class="pack-sales-row ${locked ? "is-locked" : ""}">

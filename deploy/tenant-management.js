@@ -280,6 +280,7 @@ async function switchTenant(id) {
   store.ownerFee = 2000;
   store.ownerFeeMode = "fixed";
   store.ownerFeePercent = 0;
+  store.staffFeePerSlice = null;
   store.ownerFeeDraft = null;
   store.adminQuickPanel = null;
   store.editingPizzaId = null;
@@ -300,21 +301,21 @@ async function loadCombinedTenants() {
   const snapshots = await Promise.all(store.tenants.map(async (tenant) => {
     const appId = encodeURIComponent(tenant.data_app_id);
     const [settings, pizzas, records, expenses] = await Promise.all([
-      dbSelect("doko_settings", `app_id=eq.${appId}&select=owner_fee,owner_fee_mode,owner_fee_percent&limit=1`),
+      dbSelect("doko_settings", `app_id=eq.${appId}&select=owner_fee,owner_fee_mode,owner_fee_percent,staff_fee_per_slice&limit=1`),
       dbSelect("doko_pizzas", `app_id=eq.${appId}&select=id,name,cost,price,pack_size,pack_price,active,image,sort_order`),
       dbSelect("doko_daily_records", `app_id=eq.${appId}&select=record_date,sales,sales_detail,stock,submitted_at`),
       dbSelect("doko_daily_expenses", `app_id=eq.${appId}&select=record_date,amount`),
     ]);
     return { tenant, ownerFee: Number(settings[0]?.owner_fee ?? 2000),
       ownerFeeMode: settings[0]?.owner_fee_mode === "percent" ? "percent" : "fixed",
-      ownerFeePercent: Number(settings[0]?.owner_fee_percent ?? 0), pizzas, records, expenses };
+      ownerFeePercent: Number(settings[0]?.owner_fee_percent ?? 0), staffFeePerSlice: settings[0]?.staff_fee_per_slice == null ? null : Number(settings[0].staff_fee_per_slice), pizzas, records, expenses };
   }));
   if (generation !== access.generation) throw Error("Sesi telah berubah.");
   store.combinedTenants = snapshots;
 }
 
 function summaryForTenant(snapshot, dates, salesScope = "tenant") {
-  const summary = { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, net: 0, afterFee: 0 };
+  const summary = { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, staffWage: 0, staffIncome: 0, net: 0, afterFee: 0 };
   const selectedDates = new Set(dates);
   snapshot.records.filter((row) => selectedDates.has(row.record_date)).forEach((row) => {
     const sales = splitSalesPayload(row.sales);
@@ -328,8 +329,10 @@ function summaryForTenant(snapshot, dates, salesScope = "tenant") {
   });
   summary.expenses = snapshot.expenses.filter((row) => selectedDates.has(row.record_date)).reduce((sum, row) => sum + Number(row.amount), 0);
   summary.ownerShare = calculateOwnerShare(summary, snapshot);
+  summary.staffWage = calculateStaffWage(summary, snapshot);
+  summary.staffIncome = calculateStaffIncome(summary, snapshot);
   summary.afterFee = summary.revenue - summary.ownerShare;
-  summary.net = summary.afterFee - summary.cost - summary.expenses;
+  summary.net = summary.afterFee - summary.cost - summary.expenses - summary.staffWage;
   return summary;
 }
 
@@ -356,9 +359,9 @@ function renderCombinedTenants() {
   const totals = summaries.reduce((total, { summary }) => {
     Object.keys(total).forEach((key) => { total[key] += summary[key]; });
     return total;
-  }, { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, net: 0, afterFee: 0 });
+  }, { slices: 0, revenue: 0, cost: 0, ownerShare: 0, expenses: 0, staffWage: 0, staffIncome: 0, net: 0, afterFee: 0 });
   const tenantsWithData = summaries.filter((item) => item.hasData).length;
-  const headline = isStaff ? totals.ownerShare : isReport ? totals.revenue : totals.net;
+  const headline = isStaff ? totals.staffIncome : isReport ? totals.revenue : totals.net;
   const headlineLabel = isStaff ? "Penghasilan staff" : isReport ? "Omzet kotor" : "Laba bersih";
   const secondaryLabel = isStaff ? "Tenant berdata" : isReport ? "Laba bersih" : "Omzet kotor";
   const secondaryValue = isStaff ? `${tenantsWithData} / ${summaries.length}` : rupiah(isReport ? totals.net : totals.revenue);
@@ -375,17 +378,17 @@ function renderCombinedTenants() {
       <div class="combined-main-value"><span>${headlineLabel}</span><strong>${rupiah(headline)}</strong></div>
       <div class="combined-hero-stats"><div><span>Penjualan</span><strong>${totals.slices}<small> slice</small></strong></div><div><span>${secondaryLabel}</span><strong>${secondaryValue}</strong></div></div>
     </div>
-    ${!isStaff ? `<div class="combined-ledger">${[["Modal (HPP)", totals.cost, "inventory_2"], ["Bagi hasil", totals.ownerShare, "handshake"], ["Pengeluaran", totals.expenses, "payments"]].map(([label, value, icon]) => `<div><span><span class="material-symbols-outlined" aria-hidden="true">${icon}</span>${label}</span><strong>${rupiah(value)}</strong></div>`).join("")}</div>` : ""}
+    ${!isStaff ? `<div class="combined-ledger">${[["Modal (HPP)", totals.cost, "inventory_2"], ["Bagi hasil", totals.ownerShare, "handshake"], ...(totals.staffWage ? [["Gaji staff",totals.staffWage,"badge"]] : []), ["Pengeluaran", totals.expenses, "payments"]].map(([label, value, icon]) => `<div><span><span class="material-symbols-outlined" aria-hidden="true">${icon}</span>${label}</span><strong>${rupiah(value)}</strong></div>`).join("")}</div>` : ""}
   </section>` : `<section class="panel tenant-empty-state combined-empty" role="status"><span class="material-symbols-outlined" aria-hidden="true">receipt_long</span><h3>Belum ada data</h3><p>Belum ada transaksi dari seluruh tenant pada tanggal ini.</p><small>${ticketDateDescription(dates)}</small></section>`}
   <section class="panel combined-tenant-list" aria-label="Rincian per tenant">
     <div class="combined-list-heading"><h3>${isStaff ? "Rincian staff" : "Ringkasan tenant"}</h3><span>${tenantsWithData} berdata</span></div>
     ${summaries.map(({ snapshot, summary, hasData }) => `<button class="combined-tenant-row ${hasData ? "" : "is-empty"}" type="button" data-select-tenant="${escapeHtml(snapshot.tenant.id)}" aria-label="Lihat detail ${escapeHtml(staffTenantLabel(snapshot.tenant))}">
       <span class="combined-avatar" aria-hidden="true">${escapeHtml(getInitials(snapshot.tenant.staff_name || tenantLabel(snapshot.tenant)))}</span>
       <span class="combined-tenant-copy"><strong>${escapeHtml(snapshot.tenant.staff_name || "Staff")}</strong><span>${escapeHtml(tenantLabel(snapshot.tenant))}${snapshot.tenant.active ? "" : " · Nonaktif"}</span>${hasData && !isStaff ? `<small>Bagi hasil ${rupiah(summary.ownerShare)}</small>` : ""}</span>
-      <span class="combined-tenant-value">${hasData ? `<strong>${rupiah(isStaff ? summary.ownerShare : summary.revenue)}</strong><small>${summary.slices} slice</small>` : `<small class="combined-no-data">Belum ada data</small>`}</span>
+      <span class="combined-tenant-value">${hasData ? `<strong>${rupiah(isStaff ? summary.staffIncome : summary.revenue)}</strong><small>${summary.slices} slice</small>` : `<small class="combined-no-data">Belum ada data</small>`}</span>
       <span class="material-symbols-outlined combined-row-arrow" aria-hidden="true">chevron_right</span>
     </button>`).join("")}
-    <p class="combined-footnote">${isStaff ? "Penghasilan" : "Bagi hasil"} mengikuti fee masing-masing tenant.</p>
+    <p class="combined-footnote">${isStaff ? "Penghasilan mengikuti pengaturan staff masing-masing tenant." : "Bagi hasil mengikuti fee masing-masing tenant."}</p>
   </section>
   </div>`;
 }
